@@ -1,0 +1,39 @@
+# ===== SECRETS — never push these to GitHub =====
+.env
+.env.*
+*.env
+
+# ===== Python cache =====
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# ===== Virtual environments =====
+venv/
+.venv/
+env/
+ENV/
+
+# ===== DevMind session data =====
+.devmind/
+
+# ===== OS files =====
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ===== IDE =====
+.vscode/
+.idea/
+*.swp
+
+# ===== Logs =====
+*.log
+logs/
+
+# ===== Test/Coverage cache =====
+.pytest_cache/
+pytest-cache-files-*/
+.coverage
+htmlcov/
