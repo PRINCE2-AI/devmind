@@ -12,7 +12,7 @@ from config import AppConfig, ModelConfig, RetryConfig, ToolConfig, HistoryConfi
 
 class TestModelConfig:
     def test_default_model(self):
-        """Default model should be claude-sonnet-4-6"""
+        """Default model should be the current Sonnet 4.6"""
         cfg = ModelConfig()
         assert cfg.name == "claude-sonnet-4-6"
 
@@ -29,9 +29,9 @@ class TestModelConfig:
 
 class TestRetryConfig:
     def test_max_retries_default(self):
-        """Default should be 3 retries"""
+        """Default should be 4 retries"""
         cfg = RetryConfig()
-        assert cfg.max_retries == 3
+        assert cfg.max_retries == 4
 
     def test_retryable_codes_present(self):
         """Important error codes must be present"""

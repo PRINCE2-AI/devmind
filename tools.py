@@ -1,53 +1,70 @@
 """
 tools.py — DevMind's Tools (The Agent's Hands)
-Inspired by Claude Code's tools.ts.
-Each tool performs one specific job — reading files, running commands, etc.
 
 Security features:
-  - Path traversal protection on all file tools
-  - Dangerous command blocking on bash
+  - Path traversal + symlink-escape protection (security.py)
+  - Dangerous command blocking on bash (security.py)
   - Binary file filtering on grep
+  - Null-byte and length validation on all text inputs
   - Configurable via config.py
+
+Observability:
+  - Every tool invocation is timed and recorded in metrics.py
+  - Failures are counted separately so we can compute per-tool error rates
 """
 
-import subprocess
+from __future__ import annotations
+
+import functools
 import os
+import subprocess
+import time
 from pathlib import Path
-from typing import Optional
+from typing import Callable
 
 from langchain_core.tools import tool
 
 from config import config
-from logger import log
+from logger import get_logger
+from metrics import record_tool
+from security import validate_command, validate_path, validate_string
+from plugins import collect_plugin_tools
+
+log = get_logger("tools")
+
+
+def _validate_path(filepath: str):
+    """Backward-compatible wrapper for the old (is_valid, error, path) signature."""
+    return validate_path(filepath)
+
+
+def _timed(tool_name: str):
+    """Decorator that times a tool invocation and records it in metrics."""
+    def deco(fn: Callable[..., str]) -> Callable[..., str]:
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs) -> str:
+            start = time.monotonic()
+            success = True
+            try:
+                result = fn(*args, **kwargs)
+                low = (result or "").lower()
+                if any(low.startswith(prefix) for prefix in (
+                    "error", "security:", "timeout", "permission denied",
+                )):
+                    success = False
+                return result
+            except Exception as e:
+                success = False
+                log.error(f"{tool_name} crashed: {e}")
+                return f"Error in {tool_name}: {e}"
+            finally:
+                record_tool(tool_name, time.monotonic() - start, success)
+        return wrapper
+    return deco
 
 
 # ============================================================
-# Helper: Path validation — prevent path traversal attacks
-# ============================================================
-def _validate_path(filepath: str) -> tuple[bool, str, Optional[Path]]:
-    """
-    Validate a file path to prevent path traversal attacks.
-
-    Returns:
-        (is_valid, error_message, resolved_path)
-    """
-    try:
-        path = Path(filepath).resolve()
-        cwd = Path(os.getcwd()).resolve()
-
-        # Ensure the path stays within the current working directory
-        if not str(path).startswith(str(cwd)):
-            log.warning(f"Path traversal attempt blocked: {filepath}")
-            return False, "Security: Only files within the current working directory can be accessed.", None
-
-        return True, "", path
-
-    except Exception as e:
-        return False, f"Invalid path: {str(e)}", None
-
-
-# ============================================================
-# TOOL 1: BashTool — Run terminal commands
+# TOOL 1: BashTool
 # ============================================================
 @tool
 def bash_tool(command: str) -> str:
@@ -56,15 +73,14 @@ def bash_tool(command: str) -> str:
     Use when: running code, git commands, listing files.
     Example: bash_tool("python --version")
     """
-    cmd_lower = command.lower().strip()
+    return _bash_impl(command)
 
-    if not cmd_lower:
-        return "No command provided. Please enter a command to run."
 
-    # Block dangerous commands
-    if any(blocked in cmd_lower for blocked in config.tool.blocked_commands):
-        log.warning(f"Blocked dangerous command: {command[:80]}")
-        return "This command has been blocked for security reasons."
+@_timed("bash_tool")
+def _bash_impl(command: str) -> str:
+    ok, err = validate_command(command)
+    if not ok:
+        return err
 
     try:
         result = subprocess.run(
@@ -77,7 +93,7 @@ def bash_tool(command: str) -> str:
         output = result.stdout.strip()
         error = result.stderr.strip()
 
-        log.debug(f"bash_tool: '{command[:50]}' → exit {result.returncode}")
+        log.debug(f"bash_tool: '{command[:50]}' -> exit {result.returncode}")
 
         if result.returncode != 0 and error:
             return f"Error (code {result.returncode}):\n{error}"
@@ -88,11 +104,11 @@ def bash_tool(command: str) -> str:
         return f"Timeout! Command took longer than {config.tool.bash_timeout} seconds."
     except Exception as e:
         log.error(f"bash_tool error: {e}")
-        return f"Error running command: {str(e)}"
+        return f"Error running command: {e}"
 
 
 # ============================================================
-# TOOL 2: FileReadTool — Read a file
+# TOOL 2: FileReadTool
 # ============================================================
 @tool
 def file_read_tool(filepath: str) -> str:
@@ -101,7 +117,16 @@ def file_read_tool(filepath: str) -> str:
     Use when: viewing code, reading a README, checking a config file.
     Example: file_read_tool("main.py")
     """
-    is_valid, error, path = _validate_path(filepath)
+    return _file_read_impl(filepath)
+
+
+@_timed("file_read_tool")
+def _file_read_impl(filepath: str) -> str:
+    ok, err = validate_string(filepath, name="filepath")
+    if not ok:
+        return f"Error: {err}"
+
+    is_valid, error, path = validate_path(filepath)
     if not is_valid:
         return error
 
@@ -111,13 +136,21 @@ def file_read_tool(filepath: str) -> str:
         if not path.is_file():
             return f"This is a directory, not a file: {filepath}"
 
+        size = path.stat().st_size
+        max_bytes = config.tool.file_read_max_bytes
+        if size > max_bytes:
+            return (
+                f"File is too large to read: {size} bytes "
+                f"(max {max_bytes}). Use grep_tool or read a slice."
+            )
+
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()
 
         max_lines = config.tool.file_read_max_lines
         if len(lines) > max_lines:
             content = "".join(lines[:max_lines])
-            log.debug(f"File truncated: {filepath} ({len(lines)} lines → {max_lines})")
+            log.debug(f"File truncated: {filepath} ({len(lines)} lines -> {max_lines})")
             return f"{content}\n\n... (file is large, showing first {max_lines} lines)"
 
         return "".join(lines) if lines else "(File is empty)"
@@ -126,11 +159,11 @@ def file_read_tool(filepath: str) -> str:
         return f"Permission denied: {filepath}"
     except Exception as e:
         log.error(f"file_read_tool error: {e}")
-        return f"Error reading file: {str(e)}"
+        return f"Error reading file: {e}"
 
 
 # ============================================================
-# TOOL 3: FileWriteTool — Create or overwrite a file
+# TOOL 3: FileWriteTool
 # ============================================================
 @tool
 def file_write_tool(filepath: str, content: str) -> str:
@@ -139,7 +172,24 @@ def file_write_tool(filepath: str, content: str) -> str:
     Use this for new files only. To edit an existing file use file_edit_tool.
     Example: file_write_tool("hello.py", "print('Hello World')")
     """
-    is_valid, error, path = _validate_path(filepath)
+    return _file_write_impl(filepath, content)
+
+
+@_timed("file_write_tool")
+def _file_write_impl(filepath: str, content: str) -> str:
+    ok, err = validate_string(filepath, name="filepath")
+    if not ok:
+        return f"Error: {err}"
+    ok, err = validate_string(
+        content,
+        name="content",
+        max_length=config.tool.file_write_max_bytes,
+        allow_empty=True,
+    )
+    if not ok:
+        return f"Error: {err}"
+
+    is_valid, error, path = validate_path(filepath)
     if not is_valid:
         return error
 
@@ -157,12 +207,11 @@ def file_write_tool(filepath: str, content: str) -> str:
         return f"Permission denied: {filepath}"
     except Exception as e:
         log.error(f"file_write_tool error: {e}")
-        return f"Error writing file: {str(e)}"
+        return f"Error writing file: {e}"
 
 
 # ============================================================
-# TOOL 4: FileEditTool — Find and replace specific text
-# Python version of Claude Code's str_replace_based_edit_tool
+# TOOL 4: FileEditTool
 # ============================================================
 @tool
 def file_edit_tool(filepath: str, old_text: str, new_text: str) -> str:
@@ -177,7 +226,22 @@ def file_edit_tool(filepath: str, old_text: str, new_text: str) -> str:
     - old_text must appear only once (must be unique)
     - Returns an error if old_text is not found
     """
-    is_valid, error, path = _validate_path(filepath)
+    return _file_edit_impl(filepath, old_text, new_text)
+
+
+@_timed("file_edit_tool")
+def _file_edit_impl(filepath: str, old_text: str, new_text: str) -> str:
+    ok, err = validate_string(filepath, name="filepath")
+    if not ok:
+        return f"Error: {err}"
+    ok, err = validate_string(old_text, name="old_text", allow_empty=False)
+    if not ok:
+        return f"Error: {err}"
+    ok, err = validate_string(new_text, name="new_text", allow_empty=True)
+    if not ok:
+        return f"Error: {err}"
+
+    is_valid, error, path = validate_path(filepath)
     if not is_valid:
         return error
 
@@ -212,21 +276,21 @@ def file_edit_tool(filepath: str, old_text: str, new_text: str) -> str:
         diff = new_lines - old_lines
         diff_str = f"+{diff}" if diff >= 0 else str(diff)
 
-        log.info(f"File edited: {filepath} ({old_lines} → {new_lines} lines)")
+        log.info(f"File edited: {filepath} ({old_lines} -> {new_lines} lines)")
         return (
             f"File edited: {filepath}\n"
-            f"Replaced {old_lines} lines → {new_lines} lines ({diff_str} lines)"
+            f"Replaced {old_lines} lines -> {new_lines} lines ({diff_str} lines)"
         )
 
     except PermissionError:
         return f"Permission denied: {filepath}"
     except Exception as e:
         log.error(f"file_edit_tool error: {e}")
-        return f"Error editing file: {str(e)}"
+        return f"Error editing file: {e}"
 
 
 # ============================================================
-# TOOL 5: GrepTool — Search the codebase
+# TOOL 5: GrepTool
 # ============================================================
 @tool
 def grep_tool(pattern: str, directory: str = ".") -> str:
@@ -235,19 +299,28 @@ def grep_tool(pattern: str, directory: str = ".") -> str:
     Use when: finding a function, locating where a variable is used.
     Example: grep_tool("def main", ".") or grep_tool("import os")
     """
-    if not pattern.strip():
+    return _grep_impl(pattern, directory)
+
+
+@_timed("grep_tool")
+def _grep_impl(pattern: str, directory: str = ".") -> str:
+    if not pattern or not pattern.strip():
         return "Pattern is empty! Please provide a search pattern."
 
     try:
-        results: list[str] = []
+        results = []
         search_dir = Path(directory)
 
         if not search_dir.exists():
             return f"Directory not found: {directory}"
 
         max_results = config.tool.grep_max_results
+        max_files = config.tool.grep_max_files
+        files_scanned = 0
 
         for file_path in search_dir.rglob("*"):
+            if files_scanned >= max_files:
+                break
             if len(results) >= max_results:
                 break
 
@@ -256,12 +329,11 @@ def grep_tool(pattern: str, directory: str = ".") -> str:
             if not file_path.is_file():
                 continue
 
-            # Skip binary files — only search known text extensions
             suffix = file_path.suffix.lower()
             if suffix and suffix not in config.tool.text_extensions:
                 continue
-            # Files with no extension (e.g. Makefile, Dockerfile) are allowed
 
+            files_scanned += 1
             try:
                 with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
                     for line_num, line in enumerate(f, 1):
@@ -280,16 +352,16 @@ def grep_tool(pattern: str, directory: str = ".") -> str:
         if len(results) == max_results:
             output += f"\n\n(There may be more results — showing first {max_results})"
 
-        log.debug(f"grep_tool: '{pattern}' → {len(results)} results")
+        log.debug(f"grep_tool: '{pattern}' -> {len(results)} results")
         return output
 
     except Exception as e:
         log.error(f"grep_tool error: {e}")
-        return f"Search error: {str(e)}"
+        return f"Search error: {e}"
 
 
 # ============================================================
-# TOOL 6: ListFilesTool — List files in a directory
+# TOOL 6: ListFilesTool
 # ============================================================
 @tool
 def list_files_tool(directory: str = ".") -> str:
@@ -298,6 +370,11 @@ def list_files_tool(directory: str = ".") -> str:
     Use when: understanding project structure.
     Example: list_files_tool(".") or list_files_tool("src")
     """
+    return _list_files_impl(directory)
+
+
+@_timed("list_files_tool")
+def _list_files_impl(directory: str = ".") -> str:
     try:
         path = Path(directory)
         if not path.exists():
@@ -305,7 +382,7 @@ def list_files_tool(directory: str = ".") -> str:
         if not path.is_dir():
             return f"This is a file, not a directory: {directory}"
 
-        items: list[str] = []
+        items = []
 
         for item in sorted(path.iterdir()):
             if item.name in config.tool.skip_dirs or item.name.startswith("."):
@@ -329,13 +406,13 @@ def list_files_tool(directory: str = ".") -> str:
 
     except Exception as e:
         log.error(f"list_files_tool error: {e}")
-        return f"Error listing directory: {str(e)}"
+        return f"Error listing directory: {e}"
 
 
 # ============================================================
-# All registered tools
+# All registered tools (core + plugins)
 # ============================================================
-ALL_TOOLS = [
+_CORE_TOOLS = [
     bash_tool,
     file_read_tool,
     file_write_tool,
@@ -344,7 +421,19 @@ ALL_TOOLS = [
     list_files_tool,
 ]
 
-TOOL_NAMES: list[str] = [t.name for t in ALL_TOOLS]
+
+def _load_plugin_tools():
+    if not config.plugins.enabled:
+        return []
+    try:
+        return collect_plugin_tools(config.plugins.plugins_dir)
+    except Exception as e:
+        log.error(f"Plugin loader failed: {e}")
+        return []
+
+
+ALL_TOOLS = _CORE_TOOLS + _load_plugin_tools()
+TOOL_NAMES = [t.name for t in ALL_TOOLS]
 
 
 if __name__ == "__main__":

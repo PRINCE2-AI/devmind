@@ -39,6 +39,16 @@ class RetryExhaustedError(AgentError):
         )
 
 
+class RateLimitError(AgentError):
+    """Local rate limit exceeded — too many requests in a short window."""
+
+    def __init__(self, wait_seconds: float):
+        self.wait_seconds = wait_seconds
+        super().__init__(
+            f"Local rate limit exceeded. Retry after {wait_seconds:.1f}s."
+        )
+
+
 class SecurityError(ToolError):
     """Security violation — blocked command, path traversal attempt."""
 
@@ -46,9 +56,27 @@ class SecurityError(ToolError):
         super().__init__(tool_name, f"SECURITY: {message}")
 
 
-class FileNotFoundError_(ToolError):
+class DevMindFileNotFoundError(ToolError):
     """Requested file does not exist."""
 
     def __init__(self, filepath: str):
         super().__init__("file", f"File not found: {filepath}")
         self.filepath = filepath
+
+
+class ValidationError(DevMindError):
+    """Input validation failed (bad arguments, invalid format)."""
+    pass
+
+
+class PersistenceError(DevMindError):
+    """Conversation save/load errors (corrupted file, permission denied)."""
+    pass
+
+
+class PluginError(DevMindError):
+    """Plugin loading or execution failed."""
+
+    def __init__(self, plugin_name: str, message: str):
+        self.plugin_name = plugin_name
+        super().__init__(f"[plugin:{plugin_name}] {message}")

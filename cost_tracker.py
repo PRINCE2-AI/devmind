@@ -24,11 +24,11 @@ from logger import log
 # Claude model prices (per 1 million tokens)
 # ============================================================
 MODEL_PRICES: dict[str, dict[str, float]] = {
-    "claude-opus-4-5":     {"input": 15.0,  "output": 75.0},
-    "claude-sonnet-4-5":   {"input": 3.0,   "output": 15.0},
+    "claude-opus-4":       {"input": 15.0,  "output": 75.0},
+    "claude-sonnet-4":     {"input": 3.0,   "output": 15.0},
     "claude-sonnet-4-6":   {"input": 3.0,   "output": 15.0},
-    "claude-haiku-4-5":    {"input": 0.80,  "output": 4.0},
-    "claude-haiku-3":      {"input": 0.25,  "output": 1.25},
+    "claude-haiku-4":      {"input": 0.80,  "output": 4.0},
+    "claude-haiku-3-5":    {"input": 0.25,  "output": 1.25},
     "default":             {"input": 3.0,   "output": 15.0},
 }
 
@@ -43,7 +43,7 @@ class SessionCosts:
     start_time: str = field(
         default_factory=lambda: datetime.now().isoformat()
     )
-    model: str = "claude-sonnet-4-6"
+    model: str = "claude-sonnet-4-6-20250929"
     total_input_tokens: int = 0
     total_output_tokens: int = 0
     total_calls: int = 0
@@ -57,7 +57,7 @@ class SessionCosts:
 _session: Optional[SessionCosts] = None
 
 
-def init_tracker(model: str = "claude-sonnet-4-6") -> SessionCosts:
+def init_tracker(model: str = "claude-sonnet-4-6-20250929") -> SessionCosts:
     """
     Initialize a new session tracker.
 
@@ -221,7 +221,7 @@ def register_exit_hook() -> None:
 
 
 if __name__ == "__main__":
-    init_tracker("claude-sonnet-4-6")
-    track_call(1500, 300, "claude-sonnet-4-6")
-    track_call(2000, 500, "claude-sonnet-4-6")
+    init_tracker("claude-sonnet-4-6-20250929")
+    track_call(1500, 300, "claude-sonnet-4-6-20250929")
+    track_call(2000, 500, "claude-sonnet-4-6-20250929")
     print(format_cost_summary())

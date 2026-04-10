@@ -44,7 +44,7 @@ class TestCostCalculation:
 
     def test_opus_most_expensive(self):
         """Opus should cost more than Sonnet"""
-        opus_cost = calculate_cost(1000, 1000, "claude-opus-4-5")
+        opus_cost = calculate_cost(1000, 1000, "claude-opus-4")
         sonnet_cost = calculate_cost(1000, 1000, "claude-sonnet-4-6")
         assert opus_cost > sonnet_cost
 

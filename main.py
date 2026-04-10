@@ -1,14 +1,17 @@
 """
 main.py — DevMind's Entry Point
-Inspired by Claude Code's main.tsx.
 Ties everything together and starts the terminal REPL.
 
 Features:
   - Real-time streaming display
   - Smart conversation history management
-  - Slash commands (/help, /cost, /tasks, /clear, /cd, /exit)
+  - Slash commands: /help /cost /metrics /tasks /history /save /load
+                    /sessions /delete /cd /clear /exit
   - Graceful error handling
+  - Autosave every N turns (configurable)
 """
+
+from __future__ import annotations
 
 import os
 import sys
@@ -19,6 +22,7 @@ try:
     from rich.panel import Panel
     from rich.text import Text
     from rich.markdown import Markdown
+    from rich.table import Table
 except ImportError:
     print("Please install the Rich library: pip install rich")
     sys.exit(1)
@@ -31,15 +35,13 @@ except ImportError:
     sys.exit(1)
 
 from config import config
-from logger import log
+from logger import get_logger
 
+log = get_logger("main")
 console = Console()
 
 
-# ============================================================
-# Welcome Banner
-# ============================================================
-def show_banner() -> None:
+def show_banner():
     """Display the welcome banner in the terminal."""
     banner = Text()
     banner.append("  DevMind  ", style="bold white on blue")
@@ -48,68 +50,53 @@ def show_banner() -> None:
     console.print()
     console.print(Panel(
         banner,
-        subtitle="[dim]Inspired by Claude Code • Python + LangGraph • Streaming[/dim]",
+        subtitle="[dim]Inspired by Claude Code . Python + LangGraph . Streaming[/dim]",
         border_style="blue",
         padding=(0, 2),
     ))
     console.print(
-        "[dim]Commands: [bold]/help[/bold] · [bold]/cost[/bold] · "
-        "[bold]/tasks[/bold] · [bold]/clear[/bold] · [bold]/exit[/bold][/dim]"
+        "[dim]Commands: [bold]/help[/bold] . [bold]/cost[/bold] . "
+        "[bold]/metrics[/bold] . [bold]/save[/bold] . [bold]/load[/bold] . "
+        "[bold]/exit[/bold][/dim]"
     )
     console.print()
 
 
-# ============================================================
-# Help Message
-# ============================================================
-def show_help() -> None:
+def show_help():
     """Display the help panel."""
     help_text = """
-[bold]DevMind — How to Use:[/bold]
+[bold]DevMind - How to Use:[/bold]
 
 [cyan]Normal use:[/cyan]
   Just type any coding question!
   "what files are in this folder?"
   "are there any bugs in main.py?"
   "create a file called hello_world.py"
-  "fix line 5 in main.py"
 
 [cyan]Slash commands:[/cyan]
-  [bold]/help[/bold]          — Show this help message
-  [bold]/cost[/bold]          — Show API cost so far (tokens + USD)
-  [bold]/tasks[/bold]         — Show all tasks in this session
-  [bold]/clear[/bold]         — Clear chat history
-  [bold]/exit[/bold]          — Exit DevMind
-  [bold]/cd <path>[/bold]     — Change working directory
+  [bold]/help[/bold]              - Show this help message
+  [bold]/cost[/bold]              - Show API cost so far (tokens + USD)
+  [bold]/metrics[/bold]           - Show latency / success / retry metrics
+  [bold]/tasks[/bold]             - Show all tasks in this session
+  [bold]/history[/bold]           - Print current conversation history
+  [bold]/save <name>[/bold]       - Save conversation under <name>
+  [bold]/load <name>[/bold]       - Load a saved conversation
+  [bold]/sessions[/bold]          - List saved conversations
+  [bold]/delete <name>[/bold]     - Delete a saved conversation
+  [bold]/clear[/bold]             - Clear chat history
+  [bold]/cd <path>[/bold]         - Change working directory
+  [bold]/exit[/bold]              - Exit DevMind
 
 [cyan]Tips:[/cyan]
-  • DevMind will read, edit, and run files on its own
-  • Be specific: "find the Y function in file X"
-  • To edit: "change the timeout in tools.py from 30 to 60"
+  . DevMind will read, edit, and run files on its own
+  . Be specific: "find the Y function in file X"
+  . Drop Python plugins into ~/.devmind/plugins/ to add new tools
 """
     console.print(Panel(help_text.strip(), border_style="dim", title="[dim]Help[/dim]"))
 
 
-# ============================================================
-# Smart Conversation History Management
-# ============================================================
-def smart_truncate_history(
-    history: list[dict[str, str]],
-    max_messages: int | None = None,
-    summary_threshold: int | None = None,
-) -> list[dict[str, str]]:
-    """
-    Keep conversation history manageable by summarizing old messages.
-    Preserves recent messages while compressing older ones into a summary.
-
-    Args:
-        history: Full conversation history
-        max_messages: Maximum number of messages to keep
-        summary_threshold: Summarize once history exceeds this length
-
-    Returns:
-        Truncated / summarized history
-    """
+def smart_truncate_history(history, max_messages=None, summary_threshold=None):
+    """Keep conversation history manageable by summarizing old messages."""
     max_msgs = max_messages or config.history.max_messages
     threshold = summary_threshold or config.history.summary_threshold
 
@@ -119,8 +106,7 @@ def smart_truncate_history(
     old_messages = history[:len(history) - max_msgs + 2]
     recent_messages = history[len(history) - max_msgs + 2:]
 
-    # Build a brief summary of the older messages
-    summary_parts: list[str] = []
+    summary_parts = []
     for msg in old_messages:
         role = "User" if msg["role"] == "user" else "DevMind"
         content_preview = msg["content"][:100]
@@ -138,94 +124,170 @@ def smart_truncate_history(
     ]
 
     log.debug(
-        f"History truncated: {len(history)} → {len(summarized) + len(recent_messages)} messages"
+        f"History truncated: {len(history)} -> {len(summarized) + len(recent_messages)} messages"
     )
     return summarized + recent_messages
 
 
-# ============================================================
-# Slash Commands
-# ============================================================
-def handle_slash_command(
-    cmd: str,
-    history: list[dict[str, str]],
-    agent,
-) -> tuple[bool, list[dict[str, str]]]:
-    """
-    Handle a slash command.
+def _cmd_cost():
+    from cost_tracker import format_cost_summary
+    console.print(Panel(
+        format_cost_summary(),
+        title="[dim]Session Cost[/dim]",
+        border_style="dim",
+    ))
 
-    Args:
-        cmd: Command string (e.g., "/help")
-        history: Current conversation history
-        agent: DevMindAgent instance
 
-    Returns:
-        (should_continue, updated_history)
-    """
-    cmd = cmd.strip().lower()
+def _cmd_metrics():
+    from metrics import format_metrics_summary
+    console.print(Panel(
+        format_metrics_summary(),
+        title="[dim]Performance Metrics[/dim]",
+        border_style="dim",
+    ))
 
-    if cmd in ("/exit", "/quit"):
+
+def _cmd_tasks(agent):
+    console.print(Panel(
+        agent.get_task_summary(),
+        title="[dim]Task History[/dim]",
+        border_style="dim",
+    ))
+
+
+def _cmd_history(history):
+    if not history:
+        console.print("[dim]Conversation history is empty.[/dim]")
+        return
+    for i, msg in enumerate(history, 1):
+        role = msg["role"].capitalize()
+        preview = msg["content"][:200].replace("\n", " ")
+        style = "cyan" if msg["role"] == "user" else "green"
+        console.print(f"[{style}]{i:2d}. {role}:[/{style}] {preview}")
+
+
+def _cmd_save(args, history, agent):
+    if not args:
+        console.print("[red]Usage: /save <name>[/red]")
+        return
+    try:
+        from persistence import save_session
+        path = save_session(args, history, agent.model_name)
+        console.print(f"[green]Saved:[/green] {path}")
+    except Exception as e:
+        console.print(f"[red]Save failed:[/red] {e}")
+
+
+def _cmd_load(args, history):
+    if not args:
+        console.print("[red]Usage: /load <name>[/red]")
+        return history
+    try:
+        from persistence import load_session
+        session = load_session(args)
+        console.print(
+            f"[green]Loaded[/green] '{session.session_id}' "
+            f"- {len(session.history)} messages (model {session.model})"
+        )
+        return list(session.history)
+    except Exception as e:
+        console.print(f"[red]Load failed:[/red] {e}")
+        return history
+
+
+def _cmd_sessions():
+    try:
+        from persistence import list_sessions
+        sessions = list_sessions()
+    except Exception as e:
+        console.print(f"[red]Failed to list sessions:[/red] {e}")
+        return
+
+    if not sessions:
+        console.print("[dim]No saved sessions.[/dim]")
+        return
+
+    table = Table(title="Saved sessions", show_header=True, header_style="bold")
+    table.add_column("Name")
+    table.add_column("Messages", justify="right")
+    table.add_column("Model")
+    table.add_column("Updated")
+    for s in sessions:
+        table.add_row(s["name"], str(s["messages"]), s["model"], s["updated_at"])
+    console.print(table)
+
+
+def _cmd_delete(args):
+    if not args:
+        console.print("[red]Usage: /delete <name>[/red]")
+        return
+    try:
+        from persistence import delete_session
+        if delete_session(args):
+            console.print(f"[green]Deleted session '{args}'[/green]")
+        else:
+            console.print(f"[yellow]Session '{args}' not found[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Delete failed:[/red] {e}")
+
+
+def handle_slash_command(cmd, history, agent):
+    """Handle a slash command. Returns (should_continue, updated_history)."""
+    cmd = cmd.strip()
+    lower = cmd.lower()
+
+    parts = cmd.split(maxsplit=1)
+    verb = parts[0].lower()
+    args = parts[1] if len(parts) > 1 else ""
+
+    if verb in ("/exit", "/quit"):
         console.print("\n[dim]Shutting down DevMind... Goodbye![/dim]\n")
         return False, history
 
-    elif cmd == "/help":
+    if verb == "/help":
         show_help()
-
-    elif cmd == "/cost":
-        from cost_tracker import format_cost_summary
-        console.print(Panel(
-            format_cost_summary(),
-            title="[dim]Session Cost[/dim]",
-            border_style="dim",
-        ))
-
-    elif cmd == "/tasks":
-        summary = agent.get_task_summary()
-        console.print(Panel(
-            summary,
-            title="[dim]Task History[/dim]",
-            border_style="dim",
-        ))
-
-    elif cmd == "/clear":
+    elif verb == "/cost":
+        _cmd_cost()
+    elif verb == "/metrics":
+        _cmd_metrics()
+    elif verb == "/tasks":
+        _cmd_tasks(agent)
+    elif verb == "/history":
+        _cmd_history(history)
+    elif verb == "/save":
+        _cmd_save(args, history, agent)
+    elif verb == "/load":
+        history = _cmd_load(args, history)
+    elif verb == "/sessions":
+        _cmd_sessions()
+    elif verb == "/delete":
+        _cmd_delete(args)
+    elif verb == "/clear":
         history.clear()
         console.clear()
         show_banner()
         console.print("[dim]Chat history cleared.[/dim]\n")
-
-    elif cmd.startswith("/cd "):
-        new_dir = cmd[4:].strip()
-        try:
-            os.chdir(new_dir)
-            from context import build_system_prompt
-            agent.system_prompt = build_system_prompt()
-            console.print(f"[dim]Working directory: {os.getcwd()}[/dim]")
-            log.info(f"Working directory changed: {os.getcwd()}")
-        except FileNotFoundError:
-            console.print(f"[red]Directory not found: {new_dir}[/red]")
-
+    elif verb == "/cd":
+        new_dir = args.strip()
+        if not new_dir:
+            console.print("[red]Usage: /cd <path>[/red]")
+        else:
+            try:
+                os.chdir(new_dir)
+                from context import build_system_prompt
+                agent.system_prompt = build_system_prompt()
+                console.print(f"[dim]Working directory: {os.getcwd()}[/dim]")
+                log.info(f"Working directory changed: {os.getcwd()}")
+            except FileNotFoundError:
+                console.print(f"[red]Directory not found: {new_dir}[/red]")
     else:
-        console.print(f"[red]Unknown command: {cmd}[/red] — [dim]type /help[/dim]")
-        return True, history
+        console.print(f"[red]Unknown command: {lower}[/red] - [dim]type /help[/dim]")
 
     return True, history
 
 
-# ============================================================
-# Streaming Response Display
-# ============================================================
-def display_streaming_response(agent, user_input: str, lc_history: list) -> str:
-    """
-    Stream Claude's response token by token to the terminal.
-
-    Args:
-        agent: DevMindAgent instance
-        user_input: The user's message
-        lc_history: LangChain-formatted history
-
-    Returns:
-        Full response text
-    """
+def display_streaming_response(agent, user_input, lc_history):
+    """Stream Claude's response token by token to the terminal."""
     console.print("[bold green]DevMind:[/bold green]")
 
     full_response = ""
@@ -243,25 +305,39 @@ def display_streaming_response(agent, user_input: str, lc_history: list) -> str:
         if buffer:
             console.print(buffer, end="", highlight=False)
 
-        console.print()  # Final newline
+        console.print()
 
     except Exception as e:
         log.error(f"Streaming display error: {e}")
         if not full_response:
-            full_response = agent.chat(user_input, lc_history)
             try:
-                console.print(Markdown(full_response))
-            except Exception:
-                console.print(full_response)
+                full_response = agent.chat(user_input, lc_history)
+                try:
+                    console.print(Markdown(full_response))
+                except Exception:
+                    console.print(full_response)
+            except Exception as inner:
+                console.print(f"[red]Error: {inner}[/red]")
 
     console.print()
     return full_response
 
 
-# ============================================================
-# Main REPL Loop
-# ============================================================
-def run_repl() -> None:
+def _maybe_autosave(history, agent, turn):
+    if not config.persistence.enabled:
+        return
+    every = config.persistence.autosave_every
+    if every <= 0 or turn % every != 0:
+        return
+    try:
+        from persistence import save_session
+        save_session("autosave", history, agent.model_name, metadata={"auto": True})
+        log.debug(f"Autosaved at turn {turn}")
+    except Exception as e:
+        log.debug(f"Autosave skipped: {e}")
+
+
+def run_repl():
     """Run the interactive REPL loop."""
     console.print("[dim]Starting DevMind...[/dim]", end="")
 
@@ -278,7 +354,8 @@ def run_repl() -> None:
             )
         sys.exit(1)
 
-    conversation_history: list[dict[str, str]] = []
+    conversation_history = []
+    turn = 0
 
     while True:
         try:
@@ -303,12 +380,13 @@ def run_repl() -> None:
 
             conversation_history.append({"role": "user", "content": user_input})
             conversation_history.append({"role": "assistant", "content": response})
+            turn += 1
 
-            # Smart history management
             conversation_history = smart_truncate_history(conversation_history)
+            _maybe_autosave(conversation_history, agent, turn)
 
         except KeyboardInterrupt:
-            console.print("\n\n[dim]Ctrl+C detected — shutting down...[/dim]")
+            console.print("\n\n[dim]Ctrl+C detected - shutting down...[/dim]")
             break
         except EOFError:
             break
@@ -318,10 +396,7 @@ def run_repl() -> None:
             continue
 
 
-# ============================================================
-# Entry Point
-# ============================================================
-def main() -> None:
+def main():
     """Start DevMind."""
     show_banner()
     run_repl()

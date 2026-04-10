@@ -1,21 +1,24 @@
 """
 agent.py — DevMind's Brain
-Inspired by Claude Code's query.ts + QueryEngine.ts.
 Uses LangGraph to communicate with the Claude API and execute tools.
 
 Features:
   - Task tracking (task.py)
   - Real-time streaming (chat_stream)
-  - Auto retry on failure (configurable attempts)
-  - Cost tracking on all paths
+  - Exponential backoff retry with jitter (retry_config)
+  - Client-side rate limiting (rate_limiter)
+  - Cost tracking on ALL paths including errors
+  - Performance metrics (latency, success rate, retries)
   - Custom exception handling
 """
 
-import os
+from __future__ import annotations
+
+import random
 import time
 from typing import Annotated, TypedDict, Iterator
-from dotenv import load_dotenv
 
+from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, BaseMessage
 from langgraph.graph import StateGraph, END
@@ -27,32 +30,43 @@ from context import build_system_prompt
 from tools import ALL_TOOLS
 from cost_tracker import track_call, init_tracker, register_exit_hook
 from exceptions import ConfigError, RetryExhaustedError
-from logger import log
+from logger import get_logger
+from metrics import record_request
+from rate_limiter import acquire_or_raise
 from task import (
     TaskType, TaskStatus,
     create_task, complete_task, fail_task, get_duration,
 )
 
 load_dotenv()
+log = get_logger("agent")
 
 
-# ============================================================
-# Agent State
-# ============================================================
 class AgentState(TypedDict):
-    messages: Annotated[list[BaseMessage], add_messages]
+    messages: Annotated[list, add_messages]
 
 
-# ============================================================
-# DevMind Agent
-# ============================================================
+def _compute_backoff(attempt: int) -> float:
+    """Exponential backoff with full jitter. attempt is 1-indexed."""
+    retry = config.retry
+    raw = retry.base_delay * (retry.backoff_factor ** (attempt - 1))
+    capped = min(raw, retry.max_delay)
+    jitter = capped * retry.jitter
+    return max(0.0, capped + random.uniform(-jitter, jitter))
+
+
+def _is_retryable(error: Exception) -> bool:
+    msg = str(error)
+    return any(code in msg for code in config.retry.retryable_codes)
+
+
 class DevMindAgent:
     """
     Main agent class — manages the LangGraph graph,
     communicates with the Claude API, and executes tools.
     """
 
-    def __init__(self, model: str | None = None):
+    def __init__(self, model=None):
         self.model_name = model or config.model.name
 
         if not config.api_key:
@@ -64,7 +78,6 @@ class DevMindAgent:
         init_tracker(self.model_name)
         register_exit_hook()
 
-        # Main LLM — with tools bound
         self.llm = ChatAnthropic(
             model=self.model_name,
             api_key=config.api_key,
@@ -73,15 +86,12 @@ class DevMindAgent:
         ).bind_tools(ALL_TOOLS)
 
         self.graph = self._build_graph()
-        self.system_prompt: str = build_system_prompt()
-        self.task_history: list = []
+        self.system_prompt = build_system_prompt()
+        self.task_history = []
 
         log.info(f"DevMind Agent initialized with model: {self.model_name}")
 
-    # ----------------------------------------------------------
-    # LangGraph Graph
-    # ----------------------------------------------------------
-    def _build_graph(self) -> StateGraph:
+    def _build_graph(self):
         """Build the LangGraph agent loop."""
         graph = StateGraph(AgentState)
         graph.add_node("claude", self._claude_node)
@@ -95,9 +105,12 @@ class DevMindAgent:
         graph.add_edge("tools", "claude")
         return graph.compile()
 
-    def _claude_node(self, state: AgentState) -> AgentState:
+    def _claude_node(self, state):
         """Call Claude and get a response."""
         messages = [SystemMessage(content=self.system_prompt)] + state["messages"]
+
+        acquire_or_raise(cost=1.0)
+
         response = self.llm.invoke(messages)
 
         if hasattr(response, "usage_metadata") and response.usage_metadata:
@@ -110,93 +123,82 @@ class DevMindAgent:
         return {"messages": [response]}
 
     @staticmethod
-    def _should_use_tool(state: AgentState) -> str:
+    def _should_use_tool(state):
         """Decide whether to call a tool or return the response."""
         last = state["messages"][-1]
         if hasattr(last, "tool_calls") and last.tool_calls:
             return "use_tool"
         return "done"
 
-    # ----------------------------------------------------------
-    # chat() — with retry logic
-    # ----------------------------------------------------------
-    def chat(self, user_input: str, history: list[BaseMessage] | None = None) -> str:
+    def chat(self, user_input, history=None):
         """
-        Accept a user message, process it through the agent, and return a response.
-        Retries on failure up to the configured maximum attempts.
-
-        Args:
-            user_input: The user's message
-            history: Previous conversation messages
-
-        Returns:
-            The agent's response text
-
-        Raises:
-            RetryExhaustedError: If all retries are exhausted
+        Process a user message through the agent with retry logic.
+        Retries with exponential backoff on transient failures.
         """
         task = create_task(TaskType.AGENT, user_input[:80])
         task.status = TaskStatus.RUNNING
         self.task_history.append(task)
 
-        last_error: Exception | None = None
+        last_error = None
         max_retries = config.retry.max_retries
+        retries_used = 0
+        start = time.monotonic()
+        success = False
 
-        for attempt in range(1, max_retries + 1):
-            try:
-                messages = list(history or [])
-                messages.append(HumanMessage(content=user_input))
+        try:
+            for attempt in range(1, max_retries + 1):
+                try:
+                    messages = list(history or [])
+                    messages.append(HumanMessage(content=user_input))
 
-                result = self.graph.invoke({"messages": messages})
-                response_text = self._extract_text(result["messages"])
+                    result = self.graph.invoke({"messages": messages})
+                    response_text = self._extract_text(result["messages"])
 
-                complete_task(task, f"{len(response_text)} chars")
-                log.debug(f"chat() succeeded on attempt {attempt}")
-                return response_text
+                    complete_task(task, f"{len(response_text)} chars")
+                    log.debug(f"chat() succeeded on attempt {attempt}")
+                    success = True
+                    return response_text
 
-            except Exception as e:
-                last_error = e
-                error_msg = str(e)
+                except Exception as e:
+                    last_error = e
+                    error_msg = str(e)
 
-                is_retryable = any(
-                    code in error_msg for code in config.retry.retryable_codes
-                )
-
-                if is_retryable and attempt < max_retries:
-                    wait = config.retry.base_delay * attempt
-                    log.warning(
-                        f"Retry {attempt}/{max_retries}: {error_msg[:60]}... "
-                        f"waiting {wait}s"
-                    )
-                    time.sleep(wait)
-                    continue
-                else:
+                    if _is_retryable(e) and attempt < max_retries:
+                        retries_used += 1
+                        wait = _compute_backoff(attempt)
+                        log.warning(
+                            f"Retry {attempt}/{max_retries}: "
+                            f"{error_msg[:80]} — waiting {wait:.2f}s"
+                        )
+                        time.sleep(wait)
+                        continue
                     break
 
-        fail_task(task, str(last_error))
-        raise RetryExhaustedError(max_retries, last_error)
+            fail_task(task, str(last_error))
+            raise RetryExhaustedError(max_retries, last_error)
+        finally:
+            record_request(
+                duration=time.monotonic() - start,
+                success=success,
+                retries=retries_used,
+            )
 
-    # ----------------------------------------------------------
-    # chat_stream() — Real-time token streaming
-    # ----------------------------------------------------------
-    def chat_stream(self, user_input: str, history: list[BaseMessage] | None = None) -> Iterator[str]:
+    def chat_stream(self, user_input, history=None):
         """
         Yield the response token by token for real-time display.
         First attempts LLM streaming — switches to the graph if a tool call is detected.
-
-        Args:
-            user_input: The user's message
-            history: Previous conversation messages
-
-        Yields:
-            Response text chunks
         """
         messages = [SystemMessage(content=self.system_prompt)]
         messages += list(history or [])
         messages.append(HumanMessage(content=user_input))
 
+        start = time.monotonic()
+        success = False
+        collected_text = ""
+
         try:
-            collected_text = ""
+            acquire_or_raise(cost=1.0)
+
             has_tool_calls = False
 
             for chunk in self.llm.stream(messages):
@@ -222,8 +224,8 @@ class DevMindAgent:
                     yield response[len(collected_text):]
                 else:
                     yield response
+                success = True
             else:
-                # Pure text response — track cost (usage not available in streaming)
                 approx_input = sum(len(str(m.content)) // 4 for m in messages)
                 approx_output = len(collected_text) // 4
                 track_call(
@@ -231,26 +233,33 @@ class DevMindAgent:
                     output_tokens=approx_output,
                     model=self.model_name,
                 )
+                success = True
 
         except Exception as e:
             log.error(f"Streaming failed, falling back to chat(): {e}")
-            response = self.chat(user_input, history)
-            yield response
+            if collected_text:
+                track_call(
+                    input_tokens=sum(len(str(m.content)) // 4 for m in messages),
+                    output_tokens=len(collected_text) // 4,
+                    model=self.model_name,
+                )
+            try:
+                response = self.chat(user_input, history)
+                yield response
+                success = True
+            except Exception as inner:
+                log.error(f"Fallback chat() also failed: {inner}")
+                raise
+        finally:
+            record_request(
+                duration=time.monotonic() - start,
+                success=success,
+                retries=0,
+            )
 
-    # ----------------------------------------------------------
-    # Helper: Extract text from messages
-    # ----------------------------------------------------------
     @staticmethod
-    def _extract_text(messages: list[BaseMessage]) -> str:
-        """
-        Extract the last AI response text from a messages list.
-
-        Args:
-            messages: Messages returned by LangGraph
-
-        Returns:
-            Extracted text string
-        """
+    def _extract_text(messages):
+        """Extract the last AI response text from a messages list."""
         for msg in reversed(messages):
             if isinstance(msg, AIMessage) and msg.content:
                 if isinstance(msg.content, list):
@@ -265,17 +274,9 @@ class DevMindAgent:
         return "(No response received)"
 
     @staticmethod
-    def get_history_messages(history: list[dict[str, str]]) -> list[BaseMessage]:
-        """
-        Convert dict-based history to LangChain message objects.
-
-        Args:
-            history: List of {"role": "user"/"assistant", "content": "..."}
-
-        Returns:
-            List of LangChain message objects
-        """
-        messages: list[BaseMessage] = []
+    def get_history_messages(history):
+        """Convert dict-based history to LangChain message objects."""
+        messages = []
         for item in history:
             if item["role"] == "user":
                 messages.append(HumanMessage(content=item["content"]))
@@ -283,13 +284,8 @@ class DevMindAgent:
                 messages.append(AIMessage(content=item["content"]))
         return messages
 
-    def get_task_summary(self) -> str:
-        """
-        Return a summary of all tasks in this session.
-
-        Returns:
-            Formatted task summary string
-        """
+    def get_task_summary(self):
+        """Return a summary of all tasks in this session."""
         if not self.task_history:
             return "No tasks have run yet."
 
@@ -302,11 +298,11 @@ class DevMindAgent:
             dur = get_duration(t)
             dur_str = f"{dur}s" if dur else "..."
             if t.status == TaskStatus.COMPLETED:
-                icon = "✅"
+                icon = "OK"
             elif t.status == TaskStatus.FAILED:
-                icon = "❌"
+                icon = "XX"
             else:
-                icon = "⏳"
+                icon = ".."
             lines.append(f"  {icon} [{t.id}] {t.description[:50]} ({dur_str})")
 
         return "\n".join(lines)
