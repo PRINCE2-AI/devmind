@@ -18,10 +18,9 @@ import atexit
 import json
 import threading
 import time
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from config import config
 from logger import get_logger
@@ -35,6 +34,7 @@ log = get_logger("metrics")
 @dataclass
 class LatencySeries:
     """Rolling latency samples with percentile calculations."""
+
     samples: list[float] = field(default_factory=list)
     max_samples: int = 500  # keep memory bounded
 
@@ -53,11 +53,16 @@ class LatencySeries:
         return round(ordered[idx], 4)
 
     @property
-    def p50(self) -> float: return self.percentile(50)
+    def p50(self) -> float:
+        return self.percentile(50)
+
     @property
-    def p95(self) -> float: return self.percentile(95)
+    def p95(self) -> float:
+        return self.percentile(95)
+
     @property
-    def p99(self) -> float: return self.percentile(99)
+    def p99(self) -> float:
+        return self.percentile(99)
 
     @property
     def mean(self) -> float:
@@ -71,6 +76,7 @@ class LatencySeries:
 @dataclass
 class ToolMetrics:
     """Per-tool invocation metrics."""
+
     invocations: int = 0
     errors: int = 0
     total_time_seconds: float = 0.0
@@ -81,12 +87,17 @@ class ToolMetrics:
 
     @property
     def avg_time_seconds(self) -> float:
-        return round(self.total_time_seconds / self.invocations, 4) if self.invocations else 0.0
+        return (
+            round(self.total_time_seconds / self.invocations, 4)
+            if self.invocations
+            else 0.0
+        )
 
 
 @dataclass
 class MetricsSnapshot:
     """A serializable view of all current metrics."""
+
     session_id: str
     started_at: str
     uptime_seconds: float
@@ -160,15 +171,21 @@ class MetricsRegistry:
                 requests_succeeded=self.requests_succeeded,
                 requests_failed=self.requests_failed,
                 retries_total=self.retries_total,
-                success_rate=round(self.requests_succeeded / total, 4) if total else 0.0,
+                success_rate=(
+                    round(self.requests_succeeded / total, 4) if total else 0.0
+                ),
                 latency_p50=self.latencies.p50,
                 latency_p95=self.latencies.p95,
                 latency_p99=self.latencies.p99,
                 latency_mean=self.latencies.mean,
-                tools={name: asdict(m) | {
-                    "error_rate": m.error_rate,
-                    "avg_time_seconds": m.avg_time_seconds,
-                } for name, m in self.tools.items()},
+                tools={
+                    name: asdict(m)
+                    | {
+                        "error_rate": m.error_rate,
+                        "avg_time_seconds": m.avg_time_seconds,
+                    }
+                    for name, m in self.tools.items()
+                },
             )
 
     def format_summary(self) -> str:
@@ -205,7 +222,7 @@ class MetricsRegistry:
     # --------------------------------------------------------
     # Persistence
     # --------------------------------------------------------
-    def persist(self) -> Optional[Path]:
+    def persist(self) -> Path | None:
         """Write a JSON snapshot to disk. Returns the file path or None."""
         if self.requests_total == 0:
             return None

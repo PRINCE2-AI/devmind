@@ -17,20 +17,38 @@ from __future__ import annotations
 
 import functools
 import os
+import shutil
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from langchain_core.tools import tool
 
 from config import config
 from logger import get_logger
 from metrics import record_tool
-from security import validate_command, validate_path, validate_string
 from plugins import collect_plugin_tools
+from security import validate_command, validate_path, validate_string
 
 log = get_logger("tools")
+
+
+def _find_bash_executable() -> str:
+    """Return a real Bash executable, preferring Git Bash on Windows."""
+    if os.name == "nt":
+        git_executable = shutil.which("git")
+        if git_executable:
+            git_root = Path(git_executable).resolve().parent.parent
+            for relative_path in ("bin/bash.exe", "usr/bin/bash.exe"):
+                candidate = git_root / relative_path
+                if candidate.is_file():
+                    return str(candidate)
+
+    bash_executable = shutil.which("bash")
+    if bash_executable:
+        return bash_executable
+    raise FileNotFoundError("Bash was not found. Install Git Bash or Bash.")
 
 
 def _validate_path(filepath: str):
@@ -40,6 +58,7 @@ def _validate_path(filepath: str):
 
 def _timed(tool_name: str):
     """Decorator that times a tool invocation and records it in metrics."""
+
     def deco(fn: Callable[..., str]) -> Callable[..., str]:
         @functools.wraps(fn)
         def wrapper(*args, **kwargs) -> str:
@@ -48,9 +67,15 @@ def _timed(tool_name: str):
             try:
                 result = fn(*args, **kwargs)
                 low = (result or "").lower()
-                if any(low.startswith(prefix) for prefix in (
-                    "error", "security:", "timeout", "permission denied",
-                )):
+                if any(
+                    low.startswith(prefix)
+                    for prefix in (
+                        "error",
+                        "security:",
+                        "timeout",
+                        "permission denied",
+                    )
+                ):
                     success = False
                 return result
             except Exception as e:
@@ -59,7 +84,9 @@ def _timed(tool_name: str):
                 return f"Error in {tool_name}: {e}"
             finally:
                 record_tool(tool_name, time.monotonic() - start, success)
+
         return wrapper
+
     return deco
 
 
@@ -84,7 +111,7 @@ def _bash_impl(command: str) -> str:
 
     try:
         result = subprocess.run(
-            ["bash", "-c", command],
+            [_find_bash_executable(), "-c", command],
             capture_output=True,
             text=True,
             timeout=config.tool.bash_timeout,
@@ -129,6 +156,8 @@ def _file_read_impl(filepath: str) -> str:
     is_valid, error, path = validate_path(filepath)
     if not is_valid:
         return error
+    if path is None:
+        return "Error: Path validation did not return a resolved path."
 
     try:
         if not path.exists():
@@ -144,7 +173,7 @@ def _file_read_impl(filepath: str) -> str:
                 f"(max {max_bytes}). Use grep_tool or read a slice."
             )
 
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+        with open(path, encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()
 
         max_lines = config.tool.file_read_max_lines
@@ -192,6 +221,8 @@ def _file_write_impl(filepath: str, content: str) -> str:
     is_valid, error, path = validate_path(filepath)
     if not is_valid:
         return error
+    if path is None:
+        return "Error: Path validation did not return a resolved path."
 
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -244,6 +275,8 @@ def _file_edit_impl(filepath: str, old_text: str, new_text: str) -> str:
     is_valid, error, path = validate_path(filepath)
     if not is_valid:
         return error
+    if path is None:
+        return "Error: Path validation did not return a resolved path."
 
     if old_text == new_text:
         return "old_text and new_text are identical — nothing to change."
@@ -308,7 +341,7 @@ def _grep_impl(pattern: str, directory: str = ".") -> str:
         return "Pattern is empty! Please provide a search pattern."
 
     try:
-        results = []
+        results: list[str] = []
         search_dir = Path(directory)
 
         if not search_dir.exists():
@@ -335,7 +368,7 @@ def _grep_impl(pattern: str, directory: str = ".") -> str:
 
             files_scanned += 1
             try:
-                with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                with open(file_path, encoding="utf-8", errors="ignore") as f:
                     for line_num, line in enumerate(f, 1):
                         if pattern.lower() in line.lower():
                             rel_path = file_path.relative_to(search_dir)

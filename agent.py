@@ -16,27 +16,31 @@ from __future__ import annotations
 
 import random
 import time
-from typing import Annotated, TypedDict, Iterator
+from typing import Annotated, TypedDict
 
 from dotenv import load_dotenv
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, BaseMessage
-from langgraph.graph import StateGraph, END
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 
 from config import config
 from context import build_system_prompt
-from tools import ALL_TOOLS
-from cost_tracker import track_call, init_tracker, register_exit_hook
+from cost_tracker import init_tracker, register_exit_hook, track_call
 from exceptions import ConfigError, RetryExhaustedError
 from logger import get_logger
 from metrics import record_request
 from rate_limiter import acquire_or_raise
 from task import (
-    TaskType, TaskStatus,
-    create_task, complete_task, fail_task, get_duration,
+    TaskStatus,
+    TaskType,
+    complete_task,
+    create_task,
+    fail_task,
+    get_duration,
 )
+from tools import ALL_TOOLS
 
 load_dotenv()
 log = get_logger("agent")
@@ -221,7 +225,7 @@ class DevMindAgent:
                 log.debug("Tool call detected in stream, switching to graph")
                 response = self.chat(user_input, history)
                 if collected_text and response.startswith(collected_text):
-                    yield response[len(collected_text):]
+                    yield response[len(collected_text) :]
                 else:
                     yield response
                 success = True
@@ -264,7 +268,8 @@ class DevMindAgent:
             if isinstance(msg, AIMessage) and msg.content:
                 if isinstance(msg.content, list):
                     parts = [
-                        p["text"] for p in msg.content
+                        p["text"]
+                        for p in msg.content
                         if isinstance(p, dict) and p.get("type") == "text"
                     ]
                     if parts:
@@ -289,7 +294,9 @@ class DevMindAgent:
         if not self.task_history:
             return "No tasks have run yet."
 
-        completed = sum(1 for t in self.task_history if t.status == TaskStatus.COMPLETED)
+        completed = sum(
+            1 for t in self.task_history if t.status == TaskStatus.COMPLETED
+        )
         failed = sum(1 for t in self.task_history if t.status == TaskStatus.FAILED)
         total = len(self.task_history)
 

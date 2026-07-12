@@ -8,8 +8,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from metrics import (
-    LatencySeries, MetricsRegistry, reset_registry, get_registry,
-    record_request, record_tool, format_metrics_summary,
+    LatencySeries,
+    MetricsRegistry,
+    format_metrics_summary,
+    get_registry,
+    record_request,
+    record_tool,
+    reset_registry,
 )
 
 

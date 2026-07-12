@@ -15,20 +15,20 @@ from __future__ import annotations
 
 import os
 import sys
-from pathlib import Path
 
 try:
     from rich.console import Console
-    from rich.panel import Panel
-    from rich.text import Text
     from rich.markdown import Markdown
+    from rich.panel import Panel
     from rich.table import Table
+    from rich.text import Text
 except ImportError:
     print("Please install the Rich library: pip install rich")
     sys.exit(1)
 
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     print("Please install python-dotenv: pip install python-dotenv")
@@ -48,12 +48,16 @@ def show_banner():
     banner.append("  AI Coding Assistant", style="dim")
 
     console.print()
-    console.print(Panel(
-        banner,
-        subtitle="[dim]Inspired by Claude Code . Python + LangGraph . Streaming[/dim]",
-        border_style="blue",
-        padding=(0, 2),
-    ))
+    console.print(
+        Panel(
+            banner,
+            subtitle=(
+                "[dim]Inspired by Claude Code . Python + LangGraph . " "Streaming[/dim]"
+            ),
+            border_style="blue",
+            padding=(0, 2),
+        )
+    )
     console.print(
         "[dim]Commands: [bold]/help[/bold] . [bold]/cost[/bold] . "
         "[bold]/metrics[/bold] . [bold]/save[/bold] . [bold]/load[/bold] . "
@@ -103,8 +107,8 @@ def smart_truncate_history(history, max_messages=None, summary_threshold=None):
     if len(history) <= threshold:
         return history
 
-    old_messages = history[:len(history) - max_msgs + 2]
-    recent_messages = history[len(history) - max_msgs + 2:]
+    old_messages = history[: len(history) - max_msgs + 2]
+    recent_messages = history[len(history) - max_msgs + 2 :]
 
     summary_parts = []
     for msg in old_messages:
@@ -124,35 +128,44 @@ def smart_truncate_history(history, max_messages=None, summary_threshold=None):
     ]
 
     log.debug(
-        f"History truncated: {len(history)} -> {len(summarized) + len(recent_messages)} messages"
+        "History truncated: "
+        f"{len(history)} -> {len(summarized) + len(recent_messages)} messages"
     )
     return summarized + recent_messages
 
 
 def _cmd_cost():
     from cost_tracker import format_cost_summary
-    console.print(Panel(
-        format_cost_summary(),
-        title="[dim]Session Cost[/dim]",
-        border_style="dim",
-    ))
+
+    console.print(
+        Panel(
+            format_cost_summary(),
+            title="[dim]Session Cost[/dim]",
+            border_style="dim",
+        )
+    )
 
 
 def _cmd_metrics():
     from metrics import format_metrics_summary
-    console.print(Panel(
-        format_metrics_summary(),
-        title="[dim]Performance Metrics[/dim]",
-        border_style="dim",
-    ))
+
+    console.print(
+        Panel(
+            format_metrics_summary(),
+            title="[dim]Performance Metrics[/dim]",
+            border_style="dim",
+        )
+    )
 
 
 def _cmd_tasks(agent):
-    console.print(Panel(
-        agent.get_task_summary(),
-        title="[dim]Task History[/dim]",
-        border_style="dim",
-    ))
+    console.print(
+        Panel(
+            agent.get_task_summary(),
+            title="[dim]Task History[/dim]",
+            border_style="dim",
+        )
+    )
 
 
 def _cmd_history(history):
@@ -172,6 +185,7 @@ def _cmd_save(args, history, agent):
         return
     try:
         from persistence import save_session
+
         path = save_session(args, history, agent.model_name)
         console.print(f"[green]Saved:[/green] {path}")
     except Exception as e:
@@ -184,6 +198,7 @@ def _cmd_load(args, history):
         return history
     try:
         from persistence import load_session
+
         session = load_session(args)
         console.print(
             f"[green]Loaded[/green] '{session.session_id}' "
@@ -198,6 +213,7 @@ def _cmd_load(args, history):
 def _cmd_sessions():
     try:
         from persistence import list_sessions
+
         sessions = list_sessions()
     except Exception as e:
         console.print(f"[red]Failed to list sessions:[/red] {e}")
@@ -223,6 +239,7 @@ def _cmd_delete(args):
         return
     try:
         from persistence import delete_session
+
         if delete_session(args):
             console.print(f"[green]Deleted session '{args}'[/green]")
         else:
@@ -275,6 +292,7 @@ def handle_slash_command(cmd, history, agent):
             try:
                 os.chdir(new_dir)
                 from context import build_system_prompt
+
                 agent.system_prompt = build_system_prompt()
                 console.print(f"[dim]Working directory: {os.getcwd()}[/dim]")
                 log.info(f"Working directory changed: {os.getcwd()}")
@@ -331,6 +349,7 @@ def _maybe_autosave(history, agent, turn):
         return
     try:
         from persistence import save_session
+
         save_session("autosave", history, agent.model_name, metadata={"auto": True})
         log.debug(f"Autosaved at turn {turn}")
     except Exception as e:
@@ -343,6 +362,7 @@ def run_repl():
 
     try:
         from agent import DevMindAgent
+
         agent = DevMindAgent()
         console.print(" [green]Ready![/green]\n")
     except Exception as e:

@@ -8,8 +8,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from cost_tracker import (
-    init_tracker, track_call, calculate_cost,
-    format_cost_summary, get_session, MODEL_PRICES,
+    MODEL_PRICES,
+    calculate_cost,
+    format_cost_summary,
+    get_session,
+    init_tracker,
+    track_call,
 )
 
 
@@ -108,10 +112,10 @@ class TestFormatSummary:
         track_call(1000, 500, "claude-sonnet-4-6")
         summary = format_cost_summary()
 
-        assert "1" in summary        # total calls
-        assert "1,000" in summary    # input tokens (formatted)
-        assert "500" in summary      # output tokens
-        assert "$" in summary        # cost in USD
+        assert "1" in summary  # total calls
+        assert "1,000" in summary  # input tokens (formatted)
+        assert "500" in summary  # output tokens
+        assert "$" in summary  # cost in USD
 
     def test_summary_shows_model(self):
         """Summary must include the model name"""
@@ -123,6 +127,7 @@ class TestFormatSummary:
 
 if __name__ == "__main__":
     import subprocess
+
     result = subprocess.run(
         ["python", "-m", "pytest", __file__, "-v", "--tb=short"],
         cwd=str(Path(__file__).parent.parent),

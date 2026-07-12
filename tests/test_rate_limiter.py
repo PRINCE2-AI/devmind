@@ -6,12 +6,9 @@ import sys
 import time
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from rate_limiter import TokenBucket, acquire_or_raise, reset_limiter
-from exceptions import RateLimitError
 
 
 class TestTokenBucket:

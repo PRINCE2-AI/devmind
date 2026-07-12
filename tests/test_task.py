@@ -9,9 +9,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from task import (
-    TaskType, TaskStatus,
-    create_task, complete_task, fail_task, get_duration,
-    generate_task_id, is_terminal_status, TaskState,
+    TaskState,
+    TaskStatus,
+    TaskType,
+    complete_task,
+    create_task,
+    fail_task,
+    get_duration,
+    is_terminal_status,
 )
 
 
@@ -139,6 +144,7 @@ class TestTaskTypes:
 
 if __name__ == "__main__":
     import subprocess
+
     result = subprocess.run(
         ["python", "-m", "pytest", __file__, "-v", "--tb=short"],
         cwd=str(Path(__file__).parent.parent),

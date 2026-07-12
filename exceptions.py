@@ -6,11 +6,13 @@ Each error type has its own class — easier to debug and handle.
 
 class DevMindError(Exception):
     """Base exception for all DevMind errors."""
+
     pass
 
 
 class ConfigError(DevMindError):
     """Configuration errors — missing API key, invalid settings."""
+
     pass
 
 
@@ -24,6 +26,7 @@ class ToolError(DevMindError):
 
 class AgentError(DevMindError):
     """Errors during agent / LLM interaction."""
+
     pass
 
 
@@ -34,8 +37,7 @@ class RetryExhaustedError(AgentError):
         self.attempts = attempts
         self.last_error = last_error
         super().__init__(
-            f"DevMind failed after {attempts} attempt(s). "
-            f"Last error: {last_error}"
+            f"DevMind failed after {attempts} attempt(s). " f"Last error: {last_error}"
         )
 
 
@@ -44,9 +46,7 @@ class RateLimitError(AgentError):
 
     def __init__(self, wait_seconds: float):
         self.wait_seconds = wait_seconds
-        super().__init__(
-            f"Local rate limit exceeded. Retry after {wait_seconds:.1f}s."
-        )
+        super().__init__(f"Local rate limit exceeded. Retry after {wait_seconds:.1f}s.")
 
 
 class SecurityError(ToolError):
@@ -66,11 +66,13 @@ class DevMindFileNotFoundError(ToolError):
 
 class ValidationError(DevMindError):
     """Input validation failed (bad arguments, invalid format)."""
+
     pass
 
 
 class PersistenceError(DevMindError):
     """Conversation save/load errors (corrupted file, permission denied)."""
+
     pass
 
 

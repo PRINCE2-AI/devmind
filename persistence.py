@@ -24,10 +24,9 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from config import config
 from exceptions import PersistenceError, ValidationError
@@ -83,8 +82,8 @@ def _session_path(name: str) -> Path:
     target = (base / f"{name}.json").resolve()
     try:
         target.relative_to(base)
-    except ValueError:
-        raise ValidationError("Session path escapes the sessions directory.")
+    except ValueError as exc:
+        raise ValidationError("Session path escapes the sessions directory.") from exc
     return target
 
 
@@ -115,7 +114,7 @@ def save_session(
     name: str,
     history: list[dict],
     model: str,
-    metadata: Optional[dict] = None,
+    metadata: dict | None = None,
 ) -> Path:
     """
     Save a conversation session to disk.
@@ -224,12 +223,14 @@ def list_sessions() -> list[dict]:
     for f in sorted(d.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
-            out.append({
-                "name": f.stem,
-                "updated_at": data.get("updated_at", ""),
-                "messages": len(data.get("history", [])),
-                "model": data.get("model", ""),
-            })
+            out.append(
+                {
+                    "name": f.stem,
+                    "updated_at": data.get("updated_at", ""),
+                    "messages": len(data.get("history", [])),
+                    "model": data.get("model", ""),
+                }
+            )
         except Exception as e:
             log.debug(f"Skipping unreadable session file {f}: {e}")
     return out
@@ -248,10 +249,15 @@ def delete_session(name: str) -> bool:
 if __name__ == "__main__":
     # Smoke test
     import tempfile
+
     with tempfile.TemporaryDirectory() as tmp:
         os.environ["DEVMIND_SESSIONS_DIR"] = tmp
         # Reload config for the override to take effect
-        import importlib, config as _cfg_mod
+        import importlib
+
+        import config as _cfg_mod
+
         importlib.reload(_cfg_mod)
         from config import config as reloaded
+
         print("Sessions dir:", reloaded.persistence.sessions_dir)

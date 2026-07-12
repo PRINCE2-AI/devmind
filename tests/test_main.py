@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from main import smart_truncate_history, show_banner, show_help
+from main import show_banner, show_help, smart_truncate_history
 
 
 class TestSmartTruncateHistory:
@@ -66,21 +66,16 @@ class TestSmartTruncateHistory:
 class TestUIFunctions:
     def test_show_banner_no_error(self):
         """Banner should display without raising an error"""
-        try:
-            show_banner()
-        except Exception as e:
-            assert False, f"show_banner() raised an exception: {e}"
+        show_banner()
 
     def test_show_help_no_error(self):
         """Help panel should display without raising an error"""
-        try:
-            show_help()
-        except Exception as e:
-            assert False, f"show_help() raised an exception: {e}"
+        show_help()
 
 
 if __name__ == "__main__":
     import subprocess
+
     result = subprocess.run(
         ["python", "-m", "pytest", __file__, "-v", "--tb=short"],
         cwd=str(Path(__file__).parent.parent),

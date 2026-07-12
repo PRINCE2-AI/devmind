@@ -10,10 +10,13 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import persistence
+from exceptions import PersistenceError, ValidationError
 from persistence import (
-    save_session, load_session, list_sessions, delete_session,
+    delete_session,
+    list_sessions,
+    load_session,
+    save_session,
 )
-from exceptions import ValidationError, PersistenceError
 
 
 @pytest.fixture

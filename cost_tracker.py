@@ -10,26 +10,24 @@ Features:
   - Multi-model price support
 """
 
-import json
 import atexit
+import json
+from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from dataclasses import dataclass, field, asdict
-from typing import Optional
 
 from logger import log
-
 
 # ============================================================
 # Claude model prices (per 1 million tokens)
 # ============================================================
 MODEL_PRICES: dict[str, dict[str, float]] = {
-    "claude-opus-4":       {"input": 15.0,  "output": 75.0},
-    "claude-sonnet-4":     {"input": 3.0,   "output": 15.0},
-    "claude-sonnet-4-6":   {"input": 3.0,   "output": 15.0},
-    "claude-haiku-4":      {"input": 0.80,  "output": 4.0},
-    "claude-haiku-3-5":    {"input": 0.25,  "output": 1.25},
-    "default":             {"input": 3.0,   "output": 15.0},
+    "claude-opus-4": {"input": 15.0, "output": 75.0},
+    "claude-sonnet-4": {"input": 3.0, "output": 15.0},
+    "claude-sonnet-4-6": {"input": 3.0, "output": 15.0},
+    "claude-haiku-4": {"input": 0.80, "output": 4.0},
+    "claude-haiku-3-5": {"input": 0.25, "output": 1.25},
+    "default": {"input": 3.0, "output": 15.0},
 }
 
 
@@ -39,10 +37,9 @@ MODEL_PRICES: dict[str, dict[str, float]] = {
 @dataclass
 class SessionCosts:
     """Complete cost information for one session."""
+
     session_id: str
-    start_time: str = field(
-        default_factory=lambda: datetime.now().isoformat()
-    )
+    start_time: str = field(default_factory=lambda: datetime.now().isoformat())
     model: str = "claude-sonnet-4-6-20250929"
     total_input_tokens: int = 0
     total_output_tokens: int = 0
@@ -54,7 +51,7 @@ class SessionCosts:
 # ============================================================
 # Global session tracker
 # ============================================================
-_session: Optional[SessionCosts] = None
+_session: SessionCosts | None = None
 
 
 def init_tracker(model: str = "claude-sonnet-4-6-20250929") -> SessionCosts:
@@ -114,7 +111,7 @@ def calculate_cost(input_tokens: int, output_tokens: int, model: str) -> float:
 def track_call(
     input_tokens: int,
     output_tokens: int,
-    model: Optional[str] = None,
+    model: str | None = None,
 ) -> float:
     """
     Record the cost of one API call.
@@ -137,13 +134,15 @@ def track_call(
     session.total_calls += 1
     session.total_cost_usd += cost
 
-    session.calls_log.append({
-        "call_num": session.total_calls,
-        "time": datetime.now().strftime("%H:%M:%S"),
-        "input": input_tokens,
-        "output": output_tokens,
-        "cost_usd": cost,
-    })
+    session.calls_log.append(
+        {
+            "call_num": session.total_calls,
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "input": input_tokens,
+            "output": output_tokens,
+            "cost_usd": cost,
+        }
+    )
 
     log.debug(
         f"API call #{session.total_calls}: "
@@ -211,6 +210,7 @@ def save_session_costs() -> None:
 # ============================================================
 def register_exit_hook() -> None:
     """Print cost summary and save to disk when the app exits."""
+
     def on_exit():
         session = get_session()
         if session.total_calls > 0:
