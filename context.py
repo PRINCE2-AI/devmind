@@ -13,7 +13,6 @@ import os
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from logger import log
 
@@ -37,7 +36,7 @@ def _run_git(args: list[str]) -> str:
         return ""
 
 
-def get_git_status() -> Optional[str]:
+def get_git_status() -> str | None:
     """
     Return a summary of the current git repository state.
     (Inspired by context.ts: getGitStatus)
@@ -74,7 +73,7 @@ def get_git_status() -> Optional[str]:
 # CLAUDE.md — Project-specific instructions
 # (Inspired by context.ts: getClaudeMds pattern)
 # ============================================================
-def get_claude_md() -> Optional[str]:
+def get_claude_md() -> str | None:
     """
     Read CLAUDE.md if it exists.
     This file contains project-specific instructions for Claude.
@@ -138,7 +137,10 @@ def build_system_prompt() -> str:
         "- bash_tool: Run terminal commands (git, python, etc.)",
         "- file_read_tool: Read file contents",
         "- file_write_tool: Create new files or fully overwrite existing ones",
-        "- file_edit_tool: Find and replace specific text in an existing file (bug fixes, code updates)",
+        (
+            "- file_edit_tool: Find and replace specific text in an existing file "
+            "(bug fixes, code updates)"
+        ),
         "- grep_tool: Search for patterns across the codebase",
         "- list_files_tool: List files in a directory",
         "",

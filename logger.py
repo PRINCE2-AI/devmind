@@ -15,19 +15,24 @@ import logging.handlers
 import os
 import re
 import sys
-from pathlib import Path
 from datetime import datetime
-
+from pathlib import Path
 
 # Secret masking patterns
 _SECRET_PATTERNS = [
     (re.compile(r"sk-ant-[A-Za-z0-9_\-]{20,}"), "sk-ant-***REDACTED***"),
     (re.compile(r"sk-[A-Za-z0-9_\-]{20,}"), "sk-***REDACTED***"),
     (re.compile(r"(?i)bearer\s+[A-Za-z0-9._\-]{16,}"), "Bearer ***REDACTED***"),
-    (re.compile(r"(?i)(api[_\-]?key|apikey|token|password|secret)\s*[:=]\s*['\"]?[^\s'\"&]{8,}"),
-     r"\1=***REDACTED***"),
-    (re.compile(r"(?i)authorization\s*[:=]\s*['\"]?[^\s'\"&]+"),
-     "authorization=***REDACTED***"),
+    (
+        re.compile(
+            r"(?i)(api[_\-]?key|apikey|token|password|secret)\s*[:=]\s*['\"]?[^\s'\"&]{8,}"
+        ),
+        r"\1=***REDACTED***",
+    ),
+    (
+        re.compile(r"(?i)authorization\s*[:=]\s*['\"]?[^\s'\"&]+"),
+        "authorization=***REDACTED***",
+    ),
 ]
 
 
@@ -68,7 +73,9 @@ class JsonFormatter(logging.Formatter):
 
     def format(self, record):
         payload = {
-            "time": datetime.fromtimestamp(record.created).isoformat(timespec="milliseconds"),
+            "time": datetime.fromtimestamp(record.created).isoformat(
+                timespec="milliseconds"
+            ),
             "level": record.levelname,
             "logger": record.name,
             "message": record.getMessage(),
@@ -116,10 +123,12 @@ def setup_logger(name="devmind", level=None, log_to_file=True, json_logs=None):
             if json_logs:
                 file_handler.setFormatter(JsonFormatter())
             else:
-                file_handler.setFormatter(logging.Formatter(
-                    "%(asctime)s | %(name)-18s | %(levelname)-8s | %(message)s",
-                    datefmt="%H:%M:%S",
-                ))
+                file_handler.setFormatter(
+                    logging.Formatter(
+                        "%(asctime)s | %(name)-18s | %(levelname)-8s | %(message)s",
+                        datefmt="%H:%M:%S",
+                    )
+                )
             file_handler.addFilter(SecretMaskingFilter())
             logger.addHandler(file_handler)
         except Exception:

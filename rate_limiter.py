@@ -32,6 +32,7 @@ class TokenBucket:
         rate_per_sec: Sustained refill rate in tokens per second.
         capacity: Maximum burst size the bucket can hold.
     """
+
     rate_per_sec: float
     capacity: float
 
@@ -129,9 +130,7 @@ def get_limiter() -> TokenBucket | None:
                 rate_per_sec=rpm / 60.0,
                 capacity=float(burst),
             )
-            log.debug(
-                f"Global rate limiter: {rpm} req/min, burst={burst}"
-            )
+            log.debug(f"Global rate limiter: {rpm} req/min, burst={burst}")
         return _global_limiter
 
 

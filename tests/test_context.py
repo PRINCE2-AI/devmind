@@ -86,6 +86,7 @@ class TestClaudeMd:
 
 if __name__ == "__main__":
     import subprocess
+
     result = subprocess.run(
         ["python", "-m", "pytest", __file__, "-v", "--tb=short"],
         cwd=str(Path(__file__).parent.parent),

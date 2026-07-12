@@ -8,8 +8,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from exceptions import (
-    DevMindError, ConfigError, ToolError,
-    AgentError, RetryExhaustedError, SecurityError,
+    AgentError,
+    ConfigError,
+    DevMindError,
+    RetryExhaustedError,
+    SecurityError,
+    ToolError,
 )
 
 
@@ -67,6 +71,7 @@ class TestSecurityError:
 
 if __name__ == "__main__":
     import subprocess
+
     result = subprocess.run(
         ["python", "-m", "pytest", __file__, "-v", "--tb=short"],
         cwd=str(Path(__file__).parent.parent),

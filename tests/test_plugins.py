@@ -5,12 +5,9 @@ tests/test_plugins.py - Tests for the plugin loader.
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from plugins import load_plugins, collect_plugin_tools
-
+from plugins import collect_plugin_tools, load_plugins
 
 EXAMPLE_PLUGIN = '''
 from langchain_core.tools import tool
@@ -27,9 +24,9 @@ def second_plugin_tool(x: int) -> int:
 '''
 
 
-BROKEN_PLUGIN = '''
+BROKEN_PLUGIN = """
 this is not valid python !@#$
-'''
+"""
 
 
 class TestPluginLoading:

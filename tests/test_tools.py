@@ -9,14 +9,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from tools import (
+    ALL_TOOLS,
+    _validate_path,
     bash_tool,
+    file_edit_tool,
     file_read_tool,
     file_write_tool,
-    file_edit_tool,
     grep_tool,
     list_files_tool,
-    _validate_path,
-    ALL_TOOLS,
 )
 
 
@@ -50,10 +50,10 @@ class TestBashTool:
         result = bash_tool.invoke({"command": "echo Hello DevMind"})
         assert "Hello DevMind" in result
 
-    def test_python_version(self):
-        """Python version command should return version string"""
-        result = bash_tool.invoke({"command": "python3 --version"})
-        assert "Python" in result
+    def test_shell_version(self):
+        """The selected Bash executable should be usable."""
+        result = bash_tool.invoke({"command": 'echo "$BASH_VERSION"'})
+        assert result and result[0].isdigit()
 
     def test_error_command(self):
         """An invalid command should return an error"""
@@ -131,10 +131,9 @@ class TestFileWriteTool:
         """A new file should be created correctly"""
         monkeypatch.chdir(tmp_path)
         new_file = tmp_path / "new_file.py"
-        result = file_write_tool.invoke({
-            "filepath": str(new_file),
-            "content": "print('DevMind rocks!')"
-        })
+        result = file_write_tool.invoke(
+            {"filepath": str(new_file), "content": "print('DevMind rocks!')"}
+        )
         assert "written" in result.lower()
         assert new_file.read_text() == "print('DevMind rocks!')"
 
@@ -144,20 +143,14 @@ class TestFileWriteTool:
         existing = tmp_path / "existing.txt"
         existing.write_text("old content")
 
-        file_write_tool.invoke({
-            "filepath": str(existing),
-            "content": "new content"
-        })
+        file_write_tool.invoke({"filepath": str(existing), "content": "new content"})
         assert existing.read_text() == "new content"
 
     def test_creates_parent_dirs(self, tmp_path, monkeypatch):
         """Missing parent directories should be created automatically"""
         monkeypatch.chdir(tmp_path)
         deep_file = tmp_path / "a" / "b" / "c" / "deep.py"
-        file_write_tool.invoke({
-            "filepath": str(deep_file),
-            "content": "# deep file"
-        })
+        file_write_tool.invoke({"filepath": str(deep_file), "content": "# deep file"})
         assert deep_file.exists()
 
 
@@ -171,11 +164,13 @@ class TestFileEditTool:
         f = tmp_path / "edit_me.py"
         f.write_text("def hello():\n    print('hi')\n")
 
-        result = file_edit_tool.invoke({
-            "filepath": str(f),
-            "old_text": "print('hi')",
-            "new_text": "print('Hello DevMind!')"
-        })
+        result = file_edit_tool.invoke(
+            {
+                "filepath": str(f),
+                "old_text": "print('hi')",
+                "new_text": "print('Hello DevMind!')",
+            }
+        )
 
         assert "edited" in result.lower() or "edit" in result.lower()
         assert "Hello DevMind!" in f.read_text()
@@ -186,11 +181,13 @@ class TestFileEditTool:
         f = tmp_path / "file.py"
         f.write_text("def foo(): pass\n")
 
-        result = file_edit_tool.invoke({
-            "filepath": str(f),
-            "old_text": "this_does_not_exist",
-            "new_text": "replacement"
-        })
+        result = file_edit_tool.invoke(
+            {
+                "filepath": str(f),
+                "old_text": "this_does_not_exist",
+                "new_text": "replacement",
+            }
+        )
         assert "not found" in result.lower()
 
     def test_edit_ambiguous(self, tmp_path, monkeypatch):
@@ -199,21 +196,21 @@ class TestFileEditTool:
         f = tmp_path / "dup.py"
         f.write_text("x = 1\nx = 1\n")
 
-        result = file_edit_tool.invoke({
-            "filepath": str(f),
-            "old_text": "x = 1",
-            "new_text": "x = 99"
-        })
+        result = file_edit_tool.invoke(
+            {"filepath": str(f), "old_text": "x = 1", "new_text": "x = 99"}
+        )
         assert "ambiguous" in result or "2" in result
 
     def test_edit_file_not_found(self, tmp_path, monkeypatch):
         """Should return an error for a non-existent file"""
         monkeypatch.chdir(tmp_path)
-        result = file_edit_tool.invoke({
-            "filepath": str(tmp_path / "nope.py"),
-            "old_text": "anything",
-            "new_text": "whatever"
-        })
+        result = file_edit_tool.invoke(
+            {
+                "filepath": str(tmp_path / "nope.py"),
+                "old_text": "anything",
+                "new_text": "whatever",
+            }
+        )
         assert "not found" in result.lower()
 
     def test_same_old_new_text(self, tmp_path, monkeypatch):
@@ -221,11 +218,9 @@ class TestFileEditTool:
         monkeypatch.chdir(tmp_path)
         f = tmp_path / "same.py"
         f.write_text("x = 1\n")
-        result = file_edit_tool.invoke({
-            "filepath": str(f),
-            "old_text": "x = 1",
-            "new_text": "x = 1"
-        })
+        result = file_edit_tool.invoke(
+            {"filepath": str(f), "old_text": "x = 1", "new_text": "x = 1"}
+        )
         assert "identical" in result.lower() or "same" in result.lower()
 
     def test_multiline_edit(self, tmp_path, monkeypatch):
@@ -235,11 +230,13 @@ class TestFileEditTool:
         original = "def old_func():\n    return 1\n\ndef other(): pass\n"
         f.write_text(original)
 
-        result = file_edit_tool.invoke({
-            "filepath": str(f),
-            "old_text": "def old_func():\n    return 1",
-            "new_text": "def new_func():\n    return 42\n    # updated!"
-        })
+        result = file_edit_tool.invoke(
+            {
+                "filepath": str(f),
+                "old_text": "def old_func():\n    return 1",
+                "new_text": "def new_func():\n    return 42\n    # updated!",
+            }
+        )
 
         assert "edited" in result.lower() or "edit" in result.lower()
         content = f.read_text()
@@ -267,7 +264,9 @@ class TestGrepTool:
         f = tmp_path / "code.py"
         f.write_text("x = 1\n")
 
-        result = grep_tool.invoke({"pattern": "xyz_not_here", "directory": str(tmp_path)})
+        result = grep_tool.invoke(
+            {"pattern": "xyz_not_here", "directory": str(tmp_path)}
+        )
         assert "not found" in result.lower()
 
     def test_case_insensitive(self, tmp_path, monkeypatch):
@@ -287,7 +286,7 @@ class TestGrepTool:
     def test_skips_binary_files(self, tmp_path, monkeypatch):
         """Binary files should be excluded from search results"""
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "image.png").write_bytes(b'\x89PNG\r\n\x1a\nhello')
+        (tmp_path / "image.png").write_bytes(b"\x89PNG\r\n\x1a\nhello")
         (tmp_path / "code.py").write_text("hello world\n")
 
         result = grep_tool.invoke({"pattern": "hello", "directory": str(tmp_path)})
@@ -353,6 +352,7 @@ class TestToolsIntegration:
 
 if __name__ == "__main__":
     import subprocess
+
     result = subprocess.run(
         ["python", "-m", "pytest", __file__, "-v", "--tb=short"],
         cwd=str(Path(__file__).parent.parent),

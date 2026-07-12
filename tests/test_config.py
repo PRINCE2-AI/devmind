@@ -3,11 +3,12 @@ tests/test_config.py — Tests for the configuration system
 """
 
 import sys
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config import AppConfig, ModelConfig, RetryConfig, ToolConfig, HistoryConfig
+from config import AppConfig, HistoryConfig, ModelConfig, RetryConfig, ToolConfig
 
 
 class TestModelConfig:
@@ -82,13 +83,14 @@ class TestAppConfig:
         cfg = ModelConfig()
         try:
             cfg.name = "something-else"
-            assert False, "Should have raised FrozenInstanceError"
-        except Exception:
-            pass  # Expected — frozen dataclass
+        except FrozenInstanceError:
+            return
+        raise AssertionError("Should have raised FrozenInstanceError")
 
 
 if __name__ == "__main__":
     import subprocess
+
     result = subprocess.run(
         ["python", "-m", "pytest", __file__, "-v", "--tb=short"],
         cwd=str(Path(__file__).parent.parent),

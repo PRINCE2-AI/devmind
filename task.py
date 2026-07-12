@@ -7,20 +7,19 @@ Tracks the lifecycle of every operation performed by the agent.
 import secrets
 import string
 import time
-from enum import Enum
 from dataclasses import dataclass, field
-from typing import Optional
+from enum import Enum
 
 
 # ============================================================
 # Task Types — the kinds of work the agent can do
 # ============================================================
 class TaskType(Enum):
-    BASH = "bash"               # Running a terminal command
-    FILE_READ = "file_read"     # Reading a file
-    FILE_WRITE = "file_write"   # Writing a file
-    WEB_SEARCH = "web_search"   # Searching the internet
-    AGENT = "agent"             # Querying Claude
+    BASH = "bash"  # Running a terminal command
+    FILE_READ = "file_read"  # Reading a file
+    FILE_WRITE = "file_write"  # Writing a file
+    WEB_SEARCH = "web_search"  # Searching the internet
+    AGENT = "agent"  # Querying Claude
 
 
 # ============================================================
@@ -28,15 +27,18 @@ class TaskType(Enum):
 # (Inspired by Task.ts: TaskStatus)
 # ============================================================
 class TaskStatus(Enum):
-    PENDING = "pending"       # Not started yet
-    RUNNING = "running"       # Currently in progress
-    COMPLETED = "completed"   # Finished successfully
-    FAILED = "failed"         # Failed with an error
-    KILLED = "killed"         # Terminated mid-execution
+    PENDING = "pending"  # Not started yet
+    RUNNING = "running"  # Currently in progress
+    COMPLETED = "completed"  # Finished successfully
+    FAILED = "failed"  # Failed with an error
+    KILLED = "killed"  # Terminated mid-execution
 
 
 def is_terminal_status(status: TaskStatus) -> bool:
-    """Return True if the task can no longer change state. (Task.ts: isTerminalTaskStatus)"""
+    """Return whether the task can no longer change state.
+
+    Mirrors Task.ts: isTerminalTaskStatus.
+    """
     return status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.KILLED)
 
 
@@ -59,10 +61,7 @@ ALPHABET = string.digits + string.ascii_lowercase  # 0-9 + a-z
 def generate_task_id(task_type: TaskType) -> str:
     """Generate a secure random ID like 'b4f7k2m9'."""
     prefix = TASK_PREFIXES.get(task_type, "x")
-    random_part = "".join(
-        ALPHABET[b % len(ALPHABET)]
-        for b in secrets.token_bytes(8)
-    )
+    random_part = "".join(ALPHABET[b % len(ALPHABET)] for b in secrets.token_bytes(8))
     return prefix + random_part
 
 
@@ -77,9 +76,9 @@ class TaskState:
     description: str
     status: TaskStatus = TaskStatus.PENDING
     start_time: float = field(default_factory=time.time)
-    end_time: Optional[float] = None
-    result: Optional[str] = None
-    error: Optional[str] = None
+    end_time: float | None = None
+    result: str | None = None
+    error: str | None = None
 
 
 def create_task(task_type: TaskType, description: str) -> TaskState:
@@ -107,7 +106,7 @@ def fail_task(task: TaskState, error: str) -> TaskState:
     return task
 
 
-def get_duration(task: TaskState) -> Optional[float]:
+def get_duration(task: TaskState) -> float | None:
     """Return how many seconds the task took, or None if still running."""
     if task.end_time and task.start_time:
         return round(task.end_time - task.start_time, 2)

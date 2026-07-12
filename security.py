@@ -16,7 +16,6 @@ import os
 import re
 import shlex
 from pathlib import Path
-from typing import Optional
 
 from config import config
 from logger import get_logger
@@ -30,10 +29,10 @@ log = get_logger("security")
 def validate_path(
     filepath: str,
     *,
-    base_dir: Optional[Path] = None,
+    base_dir: Path | None = None,
     must_exist: bool = False,
     allow_symlinks: bool = False,
-) -> tuple[bool, str, Optional[Path]]:
+) -> tuple[bool, str, Path | None]:
     """
     Validate a filesystem path.
 
@@ -68,7 +67,10 @@ def validate_path(
             log.warning(f"Path traversal attempt blocked: {filepath!r}")
             return (
                 False,
-                "Security: Only files within the current working directory can be accessed.",
+                (
+                    "Security: Only files within the current working directory "
+                    "can be accessed."
+                ),
                 None,
             )
 
@@ -125,7 +127,13 @@ def validate_command(command: str) -> tuple[bool, str]:
     for blocked in config.tool.blocked_commands:
         if blocked.strip() and blocked.lower() in lower:
             log.warning(f"Blocked command pattern '{blocked}': {stripped[:80]}")
-            return False, f"This command has been blocked for security reasons ({blocked.strip()})."
+            return (
+                False,
+                (
+                    "This command has been blocked for security reasons "
+                    f"({blocked.strip()})."
+                ),
+            )
 
     # Block sudo and su outright
     try:

@@ -154,6 +154,7 @@ def collect_plugin_tools(plugins_dir: str | Path) -> list[Any]:
 
 if __name__ == "__main__":
     from config import config
+
     tools = collect_plugin_tools(config.plugins.plugins_dir)
     print(f"Loaded {len(tools)} plugin tools")
     for t in tools:
