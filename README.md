@@ -1,221 +1,251 @@
 # DevMind
 
-**Autonomous AI coding assistant — runs in your terminal, built with Python + LangGraph.**
+[![CI](https://github.com/PRINCE2-AI/devmind/actions/workflows/ci.yml/badge.svg)](https://github.com/PRINCE2-AI/devmind/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-Agent%20runtime-1C3C3C)](https://langchain-ai.github.io/langgraph/)
+[![Anthropic API](https://img.shields.io/badge/Anthropic-Claude-D97757)](https://docs.anthropic.com/en/api/getting-started)
+[![License: MIT](https://img.shields.io/badge/License-MIT-2ea44f.svg)](LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/PRINCE2-AI/devmind?style=social)](https://github.com/PRINCE2-AI/devmind/stargazers)
 
-Inspired by the internal architecture of Anthropic's Claude Code.
+**A terminal-native coding agent built with Python, LangGraph, and Claude.**
 
----
+DevMind can inspect a workspace, search and edit files, run shell commands, stream responses, track API cost, and preserve conversation sessions. It is designed as a readable reference implementation for developers learning how tool-using coding agents fit together.
 
-## What is DevMind?
+> [!NOTE]
+> DevMind is an independent open-source project inspired by modern terminal coding-agent workflows. It is not affiliated with or endorsed by Anthropic or the Claude Code team.
 
-Your personal coding agent that lives in the terminal. Ask any coding question — it will read files, run commands, find bugs, and respond with real answers.
+## See it in action
 
-```
-You: are there any bugs in this project?
-DevMind: [reading files...] [running tests...]
-         Yes, there is an issue on line 42 of main.py...
-```
+```text
+$ python main.py
 
-## Features
++-------------------------------------------------------+
+|  DevMind   AI Coding Assistant                        |
++-------------------------------------------------------+
 
-### Core
-- **Real-time Streaming** — Responses appear token by token, just like Claude is thinking live
-- **Tool Use** — Reads, writes, edits files, runs commands, searches code
-- **Smart Retry** — Exponential backoff with jitter on API failures (retryable codes + max attempts are fully configurable)
-- **Cost Tracking** — Tracks token count and USD cost for every API call
-- **Task Management** — Tracks the full lifecycle of each operation (pending → running → completed/failed)
-- **Git Aware** — Automatically injects current branch, status, and recent commits into context
-- **CLAUDE.md Support** — Project-specific instructions loaded from a CLAUDE.md file
-- **Smart History** — Long conversations are automatically summarized to preserve context
+You: find the failing tests and explain the root cause
 
-### Reliability & Observability
-- **Metrics Registry** — p50/p95/p99 latency, success rate, per-tool stats, retry counts
-- **Rate Limiting** — Thread-safe token bucket prevents runaway API usage
-- **Session Persistence** — Save/load/list/delete named conversation sessions with atomic writes
-- **Structured Logging** — JSON logs, rotating files (5 MB × 5 backups), automatic secret masking (API keys, bearer tokens)
-- **Autosave** — Conversations are autosaved every N turns so you never lose work
-
-### Security & Sandboxing
-- **Path traversal protection** — Null-byte, symlink-escape, and base-dir enforcement
-- **Command validation** — Blocks rm -rf /, fork bombs, sudo, shutdown, etc. (fully configurable)
-- **String validation** — Length caps and null-byte rejection on all user-supplied text
-- **Secret scrubbing** — API keys and tokens are masked before they reach logs or disk
-
-### Extensibility
-- **Plugin system** — Drop any `@tool`-decorated Python file in `~/.devmind/plugins/` and it's auto-discovered
-- **Centralized Config** — All settings in `config.py` with full environment-variable overrides
-
-## Architecture (Inspired by Claude Code)
-
-```
-┌─────────────────────────────────────────────────┐
-│                    main.py                       │
-│              (Terminal REPL + UI)                │
-├─────────────────────────────────────────────────┤
-│                   agent.py                       │
-│         (LangGraph Agent Loop + Retry)           │
-├──────────┬──────────┬───────────┬───────────────┤
-│ tools.py │context.py│  task.py  │cost_tracker.py│
-│ (6 Tools)│(Sys Prompt)│(Lifecycle)│ (Cost Track) │
-├──────────┴──────────┴───────────┴───────────────┤
-│  config.py  │  logger.py  │   exceptions.py      │
-│  (Settings) │  (Logging)  │   (Error Types)      │
-└─────────────┴─────────────┴──────────────────────┘
+DevMind: [searches the project] [runs tests] [reads code]
+         The failure comes from the session loader. I found the
+         inconsistent validation path and can patch it now.
 ```
 
-| DevMind File      | Claude Code Source   | Purpose                                  |
-|-------------------|----------------------|------------------------------------------|
-| main.py           | main.tsx             | Terminal REPL + streaming display        |
-| agent.py          | query.ts             | LangGraph agent loop + retry + streaming |
-| tools.py          | tools.ts             | 6 tools + security                       |
-| context.py        | context.ts           | System prompt builder (git + CLAUDE.md)  |
-| task.py           | Task.ts              | Task lifecycle management                |
-| cost_tracker.py   | cost-tracker.ts      | Token cost tracking + session persistence|
-| config.py         | —                    | Centralized configuration                |
-| logger.py         | —                    | Structured logging system                |
-| exceptions.py     | —                    | Custom exception hierarchy               |
+## Why DevMind
 
-## Setup
+- **Agentic tool loop:** LangGraph routes between Claude and tools until the task is complete.
+- **Workspace-aware tools:** read, write, edit, search, list, and shell operations share path and input validation.
+- **Reliable sessions:** named saves, autosave, atomic persistence, and compacted conversation history.
+- **Visible operation:** streaming output, structured logs, task state, retry metrics, and per-tool latency.
+- **Cost awareness:** token usage and estimated USD cost are recorded for each API call.
+- **Offline confidence:** 156 tests cover tools, security guards, persistence, metrics, plugins, and control flow without paid API calls.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    U["Developer prompt"] --> R["Terminal REPL"]
+    R --> A["LangGraph agent"]
+    A --> C["Claude API"]
+    C --> D{"Tool call?"}
+    D -->|yes| T["Validated tools"]
+    T --> W["Local workspace"]
+    W --> A
+    D -->|no| O["Streamed answer"]
+    M["Metrics + cost + tasks"] -.-> A
+    P["Sessions + autosave"] -.-> R
+    X["User plugins"] -.-> T
+```
+
+The built-in execution loop is intentionally small enough to study:
+
+1. DevMind builds a project-aware system prompt.
+2. Claude decides whether it needs a tool.
+3. LangGraph executes the requested tool and returns the result.
+4. The loop continues until Claude produces a final response.
+5. Metrics, task state, cost, and session data are recorded around the loop.
+
+## Quick start
+
+### 1. Clone and install
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/your-username/devmind.git
+git clone https://github.com/PRINCE2-AI/devmind.git
 cd devmind
-
-# 2. Create a virtual environment (recommended)
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+```
 
-# 3. Install dependencies
+Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+Copy-Item .env.example .env
+```
 
-# 4. Add your API key to a .env file
-echo "ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxx" > .env
+macOS/Linux:
 
-# 5. Run it!
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+```
+
+> [!IMPORTANT]
+> DevMind requires Python 3.11 or newer and an Anthropic API key. Shell execution uses Bash; on Windows, install Git for Windows so DevMind can use Git Bash.
+
+### 2. Configure Claude
+
+Edit `.env` and set your key. Never commit this file.
+
+```env
+ANTHROPIC_API_KEY=your-anthropic-api-key
+DEVMIND_MODEL=claude-sonnet-4-6
+```
+
+### 3. Start DevMind
+
+Run it from the project you want the agent to work on:
+
+```powershell
+python C:\path\to\devmind\main.py
+```
+
+Or start it inside the DevMind repository:
+
+```powershell
 python main.py
 ```
 
-## Commands
+Try a focused first task:
 
-| Command              | Description                                         |
-|----------------------|-----------------------------------------------------|
-| `/help`              | Show help message                                   |
-| `/cost`              | Show API usage cost (tokens + USD)                  |
-| `/metrics`           | Show latency percentiles, success rate, tool stats  |
-| `/tasks`             | Show all tasks in the current session               |
-| `/history`           | Show recent chat history                            |
-| `/save <name>`       | Save the current conversation to a named session    |
-| `/load <name>`       | Load a previously saved conversation                |
-| `/sessions`          | List all saved sessions                             |
-| `/delete <name>`     | Delete a saved session                              |
-| `/clear`             | Clear chat history                                  |
-| `/cd <path>`         | Change working directory                            |
-| `/exit`              | Exit DevMind                                        |
+```text
+Map this project, run its tests, and tell me the highest-risk bug you find.
+```
 
-## Tools (6 Core + Unlimited Plugins)
+## Built-in tools
 
-| Tool             | Description                                           |
-|------------------|-------------------------------------------------------|
-| `bash_tool`      | Run terminal commands (with dangerous command blocking)|
-| `file_read_tool` | Read file contents (with path validation)             |
-| `file_write_tool`| Create or fully overwrite files                       |
-| `file_edit_tool` | Find and replace specific text (Claude Code style)    |
-| `grep_tool`      | Search the codebase (text files only)                 |
-| `list_files_tool`| List directory contents with file sizes               |
+| Tool | What it does |
+| --- | --- |
+| `bash_tool` | Runs a Bash command with a timeout and blocked-command checks |
+| `file_read_tool` | Reads a validated text file from the current workspace |
+| `file_write_tool` | Creates or replaces a file within the workspace |
+| `file_edit_tool` | Replaces an exact text block in an existing file |
+| `grep_tool` | Searches supported text files while skipping heavy directories |
+| `list_files_tool` | Lists workspace files and sizes |
 
-Every tool invocation is automatically timed and recorded in the metrics registry, so `/metrics` shows success rates and average latencies per tool.
+Every built-in tool records duration and success status for `/metrics`.
 
-### Writing a plugin
+## Terminal commands
 
-Drop a `.py` file into `~/.devmind/plugins/`:
+| Command | Purpose |
+| --- | --- |
+| `/help` | Show the command reference |
+| `/cost` | Show token usage and estimated session cost |
+| `/metrics` | Show latency, success, retry, and tool statistics |
+| `/tasks` | Show task lifecycle history |
+| `/history` | Show recent conversation messages |
+| `/save <name>` | Save the current conversation |
+| `/load <name>` | Load a saved conversation |
+| `/sessions` | List saved conversations |
+| `/delete <name>` | Delete a saved conversation |
+| `/cd <path>` | Change the active workspace |
+| `/clear` | Clear conversation history |
+| `/exit` | Close DevMind |
+
+## Safety boundaries
+
+DevMind validates paths, blocks known destructive command patterns, rejects privilege-escalation commands, caps input sizes, masks common secret formats in logs, and keeps file tools inside the current workspace.
+
+> [!WARNING]
+> These controls reduce accidental damage, but they are not an operating-system sandbox. A coding agent can still make harmful changes through an allowed command. Run DevMind in a disposable repository or container, review changes with Git, keep backups, and never use it with production credentials.
+
+The cost tracker is also an estimate based on the model pricing table in `cost_tracker.py`. Check current Anthropic pricing and set provider-side spend limits before a long session.
+
+## Plugins
+
+Drop a Python file into `~/.devmind/plugins/` and export one or more LangChain `@tool` objects:
 
 ```python
 from langchain_core.tools import tool
 
+
 @tool
 def word_count_tool(text: str) -> str:
-    """Return the number of words in the given text."""
+    """Return the number of words in text."""
     return str(len(text.split()))
 ```
 
-That's it. On next startup DevMind discovers the file, imports it, validates the tool, and appends it to `ALL_TOOLS`. A broken plugin never breaks the others — loader failures are logged and skipped.
-
-## Testing
-
-```bash
-# Run all tests
-python -m pytest tests/ -v
-
-# Run a specific test file
-python -m pytest tests/test_tools.py -v
-
-# Short traceback output
-python -m pytest tests/ -v --tb=short
-```
+DevMind discovers plugins at startup. A plugin that fails validation is logged and skipped without preventing other tools from loading.
 
 ## Configuration
 
-All settings are in `config.py`. You can also override via environment variables:
+Start from [`.env.example`](.env.example). These are the main settings:
 
-| Environment Variable        | Description                              | Default                   |
-|-----------------------------|------------------------------------------|---------------------------|
-| `ANTHROPIC_API_KEY`         | Anthropic API key (required)             | —                         |
-| `DEVMIND_MODEL`             | Model name                               | `claude-sonnet-4-6`       |
-| `DEVMIND_DEBUG`             | Enable debug mode                        | `false`                   |
-| `DEVMIND_LOG_LEVEL`         | Logging level                            | `INFO`                    |
-| `DEVMIND_LOG_JSON`          | Emit JSON-formatted logs                 | `false`                   |
-| `DEVMIND_MAX_RETRIES`       | Retry attempts on transient failures     | `4`                       |
-| `DEVMIND_RATE_LIMIT_RPM`    | Max requests per minute (0 = disabled)   | `50`                      |
-| `DEVMIND_RATE_LIMIT_BURST`  | Token-bucket burst size                  | `10`                      |
-| `DEVMIND_SESSIONS_DIR`      | Where to store saved conversations       | `~/.devmind/sessions`     |
-| `DEVMIND_AUTOSAVE_EVERY`    | Autosave every N turns (0 = disabled)    | `5`                       |
-| `DEVMIND_METRICS_DIR`       | Where to persist metrics snapshots       | `~/.devmind/metrics`      |
-| `DEVMIND_PLUGINS_DIR`       | Plugin discovery directory               | `~/.devmind/plugins`      |
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ANTHROPIC_API_KEY` | required | Anthropic API credential |
+| `DEVMIND_MODEL` | `claude-sonnet-4-6` | Claude model name |
+| `DEVMIND_MAX_TOKENS` | `4096` | Maximum output tokens per model call |
+| `DEVMIND_MAX_RETRIES` | `4` | Maximum attempts for retryable failures |
+| `DEVMIND_RATE_LIMIT` | `true` | Enable the client-side token bucket |
+| `DEVMIND_RPM` | `50` | Requests per minute |
+| `DEVMIND_BURST` | `10` | Allowed request burst |
+| `DEVMIND_BASH_TIMEOUT` | `30` | Shell timeout in seconds |
+| `DEVMIND_PERSIST` | `true` | Enable saved sessions and autosave |
+| `DEVMIND_AUTOSAVE` | `5` | Autosave interval in turns; `0` disables it |
+| `DEVMIND_METRICS` | `true` | Enable local performance metrics |
+| `DEVMIND_PLUGINS` | `true` | Enable plugin discovery |
+| `DEVMIND_LOG_LEVEL` | `INFO` | Logging threshold |
+| `DEVMIND_LOG_JSON` | `false` | Write structured JSON logs |
 
-## Project Structure
+## Testing
 
+The test suite is offline and does not require an Anthropic API key:
+
+```powershell
+pip install -r requirements-dev.txt
+ruff check .
+black --check .
+mypy .
+pytest -q
 ```
+
+GitHub Actions runs all four quality gates on every pull request and every push to `main`.
+
+## Project layout
+
+```text
 devmind/
-├── main.py              # Entry point + REPL (slash commands: /cost /metrics /save /load ...)
-├── agent.py             # LangGraph agent brain + retry/backoff + rate limiting
-├── tools.py             # 6 timed tools + security-hardened implementations
-├── context.py           # System prompt builder
-├── task.py              # Task lifecycle
-├── cost_tracker.py      # Token cost tracking
-├── config.py            # Centralized configuration (env-var overrides)
-├── logger.py            # Rotating + JSON logging with secret masking
-├── exceptions.py        # Custom exception hierarchy
-├── metrics.py           # p50/p95/p99 latency + per-tool stats + persistence
-├── rate_limiter.py      # Thread-safe token bucket rate limiter
-├── persistence.py       # Save/load/list/delete conversation sessions
-├── security.py          # Path/command/string validators
-├── plugins.py           # Auto-discovery of user @tool plugins
-├── requirements.txt     # Python dependencies
-├── .env                 # API key (gitignored)
-├── .gitignore
-└── tests/               # 156 tests across 13 files
-    ├── test_tools.py
-    ├── test_task.py
-    ├── test_cost_tracker.py
-    ├── test_config.py
-    ├── test_exceptions.py
-    ├── test_context.py
-    ├── test_main.py
-    ├── test_security.py
-    ├── test_rate_limiter.py
-    ├── test_metrics.py
-    ├── test_persistence.py
-    └── test_plugins.py
+|-- .github/workflows/ci.yml  # Lint, format, type, and test gates
+|-- tests/                    # Offline regression suite
+|-- agent.py                  # LangGraph agent loop and retries
+|-- main.py                   # Rich terminal REPL and slash commands
+|-- tools.py                  # Built-in tools and plugin registration
+|-- security.py               # Path, command, and string validation
+|-- context.py                # Project-aware system prompt
+|-- persistence.py            # Atomic conversation storage
+|-- metrics.py                # Request and tool telemetry
+|-- cost_tracker.py           # Token and USD estimates
+|-- plugins.py                # User tool discovery
+|-- config.py                 # Environment-driven configuration
+|-- .env.example
+`-- requirements.txt
 ```
 
-## Tech Stack
+## Roadmap
 
-- **Python 3.11+**
-- **LangGraph** — Agentic loop (tool use → response cycle)
-- **LangChain + Anthropic API** — Claude integration
-- **Rich** — Beautiful terminal UI
+- [ ] Add an explicit approval mode for file writes and shell commands
+- [ ] Add a container-backed execution option for stronger isolation
+- [ ] Add checkpoint restore and resumable multi-step plans
+- [ ] Add support for multiple model providers
+- [ ] Publish a short terminal demo and benchmark tasks
 
----
+## Contributing
 
-*Inspired by Anthropic's Claude Code internal architecture*
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md), keep tests offline, and include regression coverage for behavior changes. For security reports, follow [SECURITY.md](SECURITY.md).
+
+## License
+
+DevMind is available under the [MIT License](LICENSE).
+
+If DevMind helps you understand or build coding agents, consider starring the repository.
