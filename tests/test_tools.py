@@ -298,8 +298,9 @@ class TestGrepTool:
 # ListFilesTool Tests
 # ============================================================
 class TestListFilesTool:
-    def test_list_directory(self, tmp_path):
+    def test_list_directory(self, tmp_path, monkeypatch):
         """Should list all items in a directory"""
+        monkeypatch.chdir(tmp_path)
         (tmp_path / "file1.py").write_text("x=1")
         (tmp_path / "file2.txt").write_text("hello")
         (tmp_path / "subdir").mkdir()
@@ -309,18 +310,21 @@ class TestListFilesTool:
         assert "file2.txt" in result
         assert "subdir" in result
 
-    def test_nonexistent_directory(self):
+    def test_nonexistent_directory(self, tmp_path, monkeypatch):
         """Should return an error for a missing directory"""
-        result = list_files_tool.invoke({"directory": "/fake/nonexistent/path"})
+        monkeypatch.chdir(tmp_path)
+        result = list_files_tool.invoke({"directory": "missing-dir"})
         assert "not found" in result.lower()
 
-    def test_empty_directory(self, tmp_path):
+    def test_empty_directory(self, tmp_path, monkeypatch):
         """Should report that an empty directory is empty"""
+        monkeypatch.chdir(tmp_path)
         result = list_files_tool.invoke({"directory": str(tmp_path)})
         assert "empty" in result.lower()
 
-    def test_file_sizes_shown(self, tmp_path):
+    def test_file_sizes_shown(self, tmp_path, monkeypatch):
         """File sizes must be displayed"""
+        monkeypatch.chdir(tmp_path)
         (tmp_path / "small.txt").write_text("hi")
         result = list_files_tool.invoke({"directory": str(tmp_path)})
         assert "B" in result or "KB" in result
@@ -348,6 +352,46 @@ class TestToolsIntegration:
         """Every tool must have a description"""
         for t in ALL_TOOLS:
             assert t.description, f"{t.name} is missing a description!"
+
+
+class TestReadToolTraversal:
+    def _setup(self, tmp_path, monkeypatch):
+        workspace = tmp_path / "workspace"
+        outside = tmp_path / "outside"
+        workspace.mkdir()
+        outside.mkdir()
+        (outside / "secret.txt").write_text("SECRET_TOKEN=abcd1234", encoding="utf-8")
+        (workspace / "notes.txt").write_text("a normal needle", encoding="utf-8")
+        monkeypatch.chdir(workspace)
+        return workspace, outside
+
+    def test_grep_blocks_parent_directory(self, tmp_path, monkeypatch):
+        _, _ = self._setup(tmp_path, monkeypatch)
+        result = grep_tool.invoke({"pattern": "SECRET_TOKEN", "directory": "../outside"})
+        assert "Security" in result
+        assert "abcd1234" not in result
+
+    def test_grep_blocks_absolute_outside_path(self, tmp_path, monkeypatch):
+        _, outside = self._setup(tmp_path, monkeypatch)
+        result = grep_tool.invoke({"pattern": "SECRET_TOKEN", "directory": str(outside)})
+        assert "Security" in result
+        assert "abcd1234" not in result
+
+    def test_grep_allows_workspace(self, tmp_path, monkeypatch):
+        self._setup(tmp_path, monkeypatch)
+        result = grep_tool.invoke({"pattern": "needle", "directory": "."})
+        assert "needle" in result
+
+    def test_list_files_blocks_parent_directory(self, tmp_path, monkeypatch):
+        _, _ = self._setup(tmp_path, monkeypatch)
+        result = list_files_tool.invoke({"directory": "../outside"})
+        assert "Security" in result
+        assert "secret.txt" not in result
+
+    def test_list_files_allows_workspace(self, tmp_path, monkeypatch):
+        self._setup(tmp_path, monkeypatch)
+        result = list_files_tool.invoke({"directory": "."})
+        assert "notes.txt" in result
 
 
 if __name__ == "__main__":

@@ -67,6 +67,55 @@ class TestValidateCommand:
         ok, err = validate_command("shutdown -h now")
         assert ok is False
 
+    def test_blocks_absolute_sudo(self):
+        ok, err = validate_command("/usr/bin/sudo id")
+        assert ok is False
+
+    def test_blocks_sudo_through_env(self):
+        ok, err = validate_command("env FOO=bar sudo id")
+        assert ok is False
+
+    def test_blocks_sudo_through_wrapper_options(self):
+        for command in (
+            "env -u FOO sudo id",
+            "env -S 'sudo id'",
+            "time -f '%E' sudo id",
+            "timeout 5 sudo id",
+            "xargs -I {} sudo id",
+            "stdbuf -o 0 sudo id",
+        ):
+            ok, err = validate_command(command)
+            assert ok is False, (command, err)
+
+    def test_blocks_nested_shell_command(self):
+        ok, err = validate_command("bash -lc 'sudo id'")
+        assert ok is False
+        ok, err = validate_command('cmd /k "sudo id"')
+        assert ok is False
+
+    def test_blocks_inline_python(self):
+        ok, err = validate_command('python -c "import shutil; shutil.rmtree(\'.\')"')
+        assert ok is False
+        ok, err = validate_command('py -c "import os; os.system(\'calc\')"')
+        assert ok is False
+
+    def test_blocks_base64_pipe_to_shell(self):
+        ok, err = validate_command("echo cm0gLXJmIC8= | base64 -d | bash")
+        assert ok is False
+
+    def test_blocks_command_substitution(self):
+        ok, err = validate_command("echo $(sudo id)")
+        assert ok is False
+
+    def test_allows_python_module_command(self):
+        ok, err = validate_command("python -m pytest -c pytest.ini -q")
+        assert ok is True
+
+    def test_allows_regular_dev_commands(self):
+        for command in ("git status", "python --version", "pytest -q", "ls -la"):
+            ok, err = validate_command(command)
+            assert ok is True, (command, err)
+
 
 class TestValidatePath:
     def test_accepts_normal_relative_path(self, tmp_path, monkeypatch):

@@ -341,11 +341,13 @@ def _grep_impl(pattern: str, directory: str = ".") -> str:
         return "Pattern is empty! Please provide a search pattern."
 
     try:
-        results: list[str] = []
-        search_dir = Path(directory)
+        ok, error, search_dir = validate_path(directory, must_exist=True)
+        if not ok or search_dir is None:
+            return error
+        if not search_dir.is_dir():
+            return f"Not a directory: {directory}"
 
-        if not search_dir.exists():
-            return f"Directory not found: {directory}"
+        results: list[str] = []
 
         max_results = config.tool.grep_max_results
         max_files = config.tool.grep_max_files
@@ -360,6 +362,10 @@ def _grep_impl(pattern: str, directory: str = ".") -> str:
             if any(skip in file_path.parts for skip in config.tool.skip_dirs):
                 continue
             if not file_path.is_file():
+                continue
+            try:
+                file_path.resolve().relative_to(search_dir)
+            except (OSError, ValueError):
                 continue
 
             suffix = file_path.suffix.lower()
@@ -409,9 +415,9 @@ def list_files_tool(directory: str = ".") -> str:
 @_timed("list_files_tool")
 def _list_files_impl(directory: str = ".") -> str:
     try:
-        path = Path(directory)
-        if not path.exists():
-            return f"Directory not found: {directory}"
+        ok, error, path = validate_path(directory, must_exist=True)
+        if not ok or path is None:
+            return error
         if not path.is_dir():
             return f"This is a file, not a directory: {directory}"
 
@@ -419,6 +425,10 @@ def _list_files_impl(directory: str = ".") -> str:
 
         for item in sorted(path.iterdir()):
             if item.name in config.tool.skip_dirs or item.name.startswith("."):
+                continue
+            try:
+                item.resolve().relative_to(path)
+            except (OSError, ValueError):
                 continue
             if item.is_dir():
                 items.append(f"[DIR]  {item.name}/")
