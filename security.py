@@ -96,18 +96,166 @@ def validate_path(
 # Command validation
 # ============================================================
 _SUSPICIOUS_CHAR_RUNS = re.compile(r"`.+`|\$\([^)]+\)")
+_SHELL_OPERATORS = re.compile(r"&&|\|\||[;|\n]")
+_ENV_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_WRAPPERS = {
+    "builtin",
+    "command",
+    "env",
+    "exec",
+    "nice",
+    "nohup",
+    "setsid",
+    "stdbuf",
+    "time",
+    "timeout",
+    "xargs",
+}
+_WRAPPER_VALUE_OPTIONS = {
+    "env": {"-u", "--unset", "-C", "--chdir"},
+    "exec": {"-a"},
+    "nice": {"-n", "--adjustment"},
+    "stdbuf": {"-i", "-o", "-e", "--input", "--output", "--error"},
+    "time": {"-f", "--format", "-o", "--output"},
+    "timeout": {"-s", "--signal", "-k", "--kill-after"},
+    "xargs": {
+        "-a",
+        "--arg-file",
+        "-d",
+        "--delimiter",
+        "-E",
+        "--eof",
+        "-I",
+        "--replace",
+        "-L",
+        "--max-lines",
+        "-n",
+        "--max-args",
+        "-P",
+        "--max-procs",
+        "-s",
+        "--max-chars",
+    },
+}
+_PRIVILEGE_TOOLS = {"sudo", "su", "doas", "pkexec"}
+_SHELLS = {"bash", "sh", "zsh", "ksh", "fish", "dash", "powershell", "pwsh", "cmd"}
+_INLINE_CODE = {
+    "py": {"-c"},
+    "python": {"-c"},
+    "python3": {"-c"},
+    "node": {"-e", "--eval"},
+    "perl": {"-e"},
+    "ruby": {"-e"},
+    "php": {"-r"},
+}
+
+
+def _segments(command: str) -> list[str]:
+    return [
+        segment.strip()
+        for segment in _SHELL_OPERATORS.split(command)
+        if segment.strip()
+    ]
+
+
+def _split_env_string(value: str) -> list[str]:
+    try:
+        return shlex.split(value, posix=True)
+    except ValueError:
+        return value.split()
+
+
+def _executable(tokens: list[str]) -> tuple[str, list[str]]:
+    while tokens:
+        if _ENV_ASSIGNMENT.match(tokens[0]):
+            tokens = tokens[1:]
+            continue
+        head = Path(tokens[0]).name.lower()
+        if head not in _WRAPPERS:
+            break
+        tokens = tokens[1:]
+
+        while tokens and tokens[0].startswith("-"):
+            option = tokens[0]
+            tokens = tokens[1:]
+            if option == "--":
+                break
+            if head == "env" and (
+                option in {"-S", "--split-string"}
+                or option.startswith("--split-string=")
+                or (option.startswith("-S") and len(option) > 2)
+            ):
+                if option.startswith("--split-string="):
+                    value = option.split("=", 1)[1]
+                elif option.startswith("-S") and len(option) > 2:
+                    value = option[2:]
+                elif tokens:
+                    value = tokens[0]
+                    tokens = tokens[1:]
+                else:
+                    break
+                tokens = _split_env_string(value) + tokens
+                continue
+            if option in _WRAPPER_VALUE_OPTIONS.get(head, set()) and tokens:
+                tokens = tokens[1:]
+
+        if head == "timeout" and tokens and not tokens[0].startswith("-"):
+            tokens = tokens[1:]
+
+    if not tokens:
+        return "", []
+    return Path(tokens[0]).name.lower(), tokens[1:]
+
+
+def _shell_has_command_flag(arguments: list[str]) -> bool:
+    for argument in arguments:
+        lowered = argument.lower()
+        if lowered in {"-c", "/c", "/k"}:
+            return True
+        if (
+            lowered.startswith("-")
+            and not lowered.startswith("--")
+            and "c" in lowered[1:]
+        ):
+            return True
+    return False
+
+
+def _has_inline_flag(arguments: list[str], flags: set[str]) -> bool:
+    short_flags = {
+        flag[1:] for flag in flags if flag.startswith("-") and not flag.startswith("--")
+    }
+    for argument in arguments:
+        lowered = argument.lower()
+        if not lowered.startswith("-"):
+            break
+        if lowered in flags:
+            return True
+        if lowered.startswith("-") and not lowered.startswith("--"):
+            if any(flag in lowered[1:] for flag in short_flags):
+                return True
+    return False
 
 
 def validate_command(command: str) -> tuple[bool, str]:
     """
-    Validate a shell command before running it.
+    Best-effort shell guardrail for the bash tool.
+
+    This is a denylist over parsed shell segments, not an OS sandbox: a
+    determined caller can still run arbitrary code through an allowed
+    interpreter. The agent-level approval flow is the real boundary.
 
     Rules:
       - Must be a non-empty string
       - Null bytes rejected
-      - Must not contain any blocked substring from config.tool.blocked_commands
-      - Tokens starting with `sudo` are blocked
-      - Length is capped (10 KB) to avoid abuse
+      - Command substitution (backticks, `$()`) rejected
+      - Blocked substrings from config.tool.blocked_commands rejected
+      - Privilege escalation (sudo/su/doas/pkexec) rejected anywhere,
+        including via env wrappers and absolute paths
+      - Nested shell `-c` and inline interpreter code (`python -c`, `node -e`)
+        rejected
+      - base64 decode piped into a shell rejected
+      - Length capped (10 KB)
 
     Returns:
         (is_valid, error_message)
@@ -121,6 +269,9 @@ def validate_command(command: str) -> tuple[bool, str]:
         return False, "Invalid command (null byte)."
     if len(command) > 10_000:
         return False, "Command too long (max 10 KB)."
+    if _SUSPICIOUS_CHAR_RUNS.search(stripped):
+        log.warning(f"Command substitution blocked: {stripped[:80]}")
+        return False, "Command substitution (backticks or $()) is blocked."
 
     lower = stripped.lower()
 
@@ -135,16 +286,30 @@ def validate_command(command: str) -> tuple[bool, str]:
                 ),
             )
 
-    # Block sudo and su outright
-    try:
-        tokens = shlex.split(stripped, posix=True)
-    except ValueError:
-        # Unbalanced quotes etc. — allow bash itself to error out
-        tokens = stripped.split()
+    if re.search(r"\bbase64\b[^|]*(?:-d|--decode)[^|]*\|\s*(?:ba|z|k)?sh\b", lower):
+        return False, "Decoding base64 into a shell is blocked."
 
-    if tokens and tokens[0] in ("sudo", "su", "doas"):
-        log.warning(f"Privilege escalation blocked: {stripped[:80]}")
-        return False, "Privilege escalation commands (sudo/su/doas) are blocked."
+    for segment in _segments(stripped):
+        try:
+            tokens = shlex.split(segment, posix=True)
+        except ValueError:
+            tokens = segment.split()
+        executable, arguments = _executable(tokens)
+        if not executable:
+            continue
+        if executable in _PRIVILEGE_TOOLS:
+            log.warning(f"Privilege escalation blocked: {stripped[:80]}")
+            return False, "Privilege escalation commands (sudo/su/doas) are blocked."
+        if executable == "eval":
+            return False, "Shell eval is blocked."
+        if executable in _SHELLS and _shell_has_command_flag(arguments):
+            return False, "Nested shell execution (-c) is blocked."
+        inline_flags = _INLINE_CODE.get(executable, set())
+        if inline_flags and _has_inline_flag(arguments, inline_flags):
+            return False, (
+                f"Inline code execution via {executable} is blocked; "
+                "write a script file instead."
+            )
 
     return True, ""
 
