@@ -94,9 +94,9 @@ class TestValidateCommand:
         assert ok is False
 
     def test_blocks_inline_python(self):
-        ok, err = validate_command('python -c "import shutil; shutil.rmtree(\'.\')"')
+        ok, err = validate_command("python -c \"import shutil; shutil.rmtree('.')\"")
         assert ok is False
-        ok, err = validate_command('py -c "import os; os.system(\'calc\')"')
+        ok, err = validate_command("py -c \"import os; os.system('calc')\"")
         assert ok is False
 
     def test_blocks_base64_pipe_to_shell(self):

@@ -223,9 +223,7 @@ def _shell_has_command_flag(arguments: list[str]) -> bool:
 
 def _has_inline_flag(arguments: list[str], flags: set[str]) -> bool:
     short_flags = {
-        flag[1:]
-        for flag in flags
-        if flag.startswith("-") and not flag.startswith("--")
+        flag[1:] for flag in flags if flag.startswith("-") and not flag.startswith("--")
     }
     for argument in arguments:
         lowered = argument.lower()
