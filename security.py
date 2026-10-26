@@ -151,7 +151,11 @@ _INLINE_CODE = {
 
 
 def _segments(command: str) -> list[str]:
-    return [segment.strip() for segment in _SHELL_OPERATORS.split(command) if segment.strip()]
+    return [
+        segment.strip()
+        for segment in _SHELL_OPERATORS.split(command)
+        if segment.strip()
+    ]
 
 
 def _split_env_string(value: str) -> list[str]:
@@ -208,13 +212,21 @@ def _shell_has_command_flag(arguments: list[str]) -> bool:
         lowered = argument.lower()
         if lowered in {"-c", "/c", "/k"}:
             return True
-        if lowered.startswith("-") and not lowered.startswith("--") and "c" in lowered[1:]:
+        if (
+            lowered.startswith("-")
+            and not lowered.startswith("--")
+            and "c" in lowered[1:]
+        ):
             return True
     return False
 
 
 def _has_inline_flag(arguments: list[str], flags: set[str]) -> bool:
-    short_flags = {flag[1:] for flag in flags if flag.startswith("-") and not flag.startswith("--")}
+    short_flags = {
+        flag[1:]
+        for flag in flags
+        if flag.startswith("-") and not flag.startswith("--")
+    }
     for argument in arguments:
         lowered = argument.lower()
         if not lowered.startswith("-"):
@@ -296,7 +308,10 @@ def validate_command(command: str) -> tuple[bool, str]:
             return False, "Nested shell execution (-c) is blocked."
         inline_flags = _INLINE_CODE.get(executable, set())
         if inline_flags and _has_inline_flag(arguments, inline_flags):
-            return False, f"Inline code execution via {executable} is blocked; write a script file instead."
+            return False, (
+                f"Inline code execution via {executable} is blocked; "
+                "write a script file instead."
+            )
 
     return True, ""
 

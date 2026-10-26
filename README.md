@@ -37,7 +37,7 @@ DevMind: [searches the project] [runs tests] [reads code]
 - **Reliable sessions:** named saves, autosave, atomic persistence, and compacted conversation history.
 - **Visible operation:** streaming output, structured logs, task state, retry metrics, and per-tool latency.
 - **Cost awareness:** token usage and estimated USD cost are recorded for each API call.
-- **Offline confidence:** 156 tests cover tools, security guards, persistence, metrics, plugins, and control flow without paid API calls.
+- **Offline confidence:** 170 tests cover tools, security guards, persistence, metrics, plugins, and control flow without paid API calls.
 
 ## Architecture
 

@@ -367,13 +367,17 @@ class TestReadToolTraversal:
 
     def test_grep_blocks_parent_directory(self, tmp_path, monkeypatch):
         _, _ = self._setup(tmp_path, monkeypatch)
-        result = grep_tool.invoke({"pattern": "SECRET_TOKEN", "directory": "../outside"})
+        result = grep_tool.invoke(
+            {"pattern": "SECRET_TOKEN", "directory": "../outside"}
+        )
         assert "Security" in result
         assert "abcd1234" not in result
 
     def test_grep_blocks_absolute_outside_path(self, tmp_path, monkeypatch):
         _, outside = self._setup(tmp_path, monkeypatch)
-        result = grep_tool.invoke({"pattern": "SECRET_TOKEN", "directory": str(outside)})
+        result = grep_tool.invoke(
+            {"pattern": "SECRET_TOKEN", "directory": str(outside)}
+        )
         assert "Security" in result
         assert "abcd1234" not in result
 
